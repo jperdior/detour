@@ -39,15 +39,70 @@ Large files (over ~350 lines) are expensive to read into your context. To unders
 - To edit a file, read the exact section you will change with offset and limit. Don't delegate subtle debugging (concurrency, security, off-by-one): read the relevant ranges yourself.
 - If detour read fails, fall back to Grep and targeted Reads.`
 
+// StaleAfter is how long an open session's transcript may go unchanged
+// before the session counts as ended. Closing a terminal tab can kill
+// Claude Code before its SessionEnd hook runs.
+const StaleAfter = 2 * time.Hour
+
+// Sweep ends open sessions that have gone stale and measures them. A stale
+// session that is later resumed is measured in full again by the report.
+func Sweep(dir string, now time.Time) int {
+	ss, _ := All(dir)
+	n := 0
+	for _, s := range ss {
+		if !s.Ended.IsZero() {
+			continue
+		}
+		last := s.Started
+		if s.TranscriptPath != "" {
+			if st, err := os.Stat(s.TranscriptPath); err == nil {
+				last = st.ModTime()
+			}
+		}
+		if now.Sub(last) < StaleAfter {
+			continue
+		}
+		s.Ended, s.EndReason = last.UTC(), "stale"
+		if s.TranscriptPath != "" {
+			if u, err := transcript.Summarize(s.TranscriptPath); err == nil {
+				s.Usage = &u
+			}
+		}
+		if s.Save(dir) == nil {
+			n++
+		}
+	}
+	return n
+}
+
+// notifyAtTarget notifies once when the trial reaches its target.
+func notifyAtTarget(cfg Config, dir string, notify func(title, msg string)) {
+	n := Measured(dir)
+	marker := filepath.Join(dir, "notified")
+	if n < cfg.Target {
+		return
+	}
+	if _, err := os.Stat(marker); os.IsNotExist(err) {
+		if notify != nil {
+			notify("detour", fmt.Sprintf("%d sesiones medidas: ya se pueden comparar los resultados (detour trial report)", n))
+		}
+		_ = os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644)
+	}
+}
+
 // SessionStart assigns the session an arm and, in the detour arm, gives the
-// agent the guidance. It never fails the session.
-func SessionStart(in io.Reader, out io.Writer, cfg Config, dir string) error {
+// agent the guidance. It also ends stale sessions. It never fails the
+// session.
+func SessionStart(in io.Reader, out io.Writer, cfg Config, dir string, notify func(title, msg string)) error {
 	if !cfg.Enabled {
 		return nil
 	}
 	var hi hookInput
 	if json.NewDecoder(in).Decode(&hi) != nil || hi.SessionID == "" {
 		return nil
+	}
+	if Sweep(dir, time.Now()) > 0 {
+		notifyAtTarget(cfg, dir, notify)
 	}
 	s, err := Begin(cfg, dir, hi.SessionID, hi.Cwd, hi.Source, hi.TranscriptPath)
 	if err != nil || !s.InTrial() || s.Arm != ArmDetour {
@@ -110,7 +165,7 @@ func SessionEnd(in io.Reader, cfg Config, dir string, notify func(title, msg str
 	if hi.TranscriptPath != "" {
 		s.TranscriptPath = hi.TranscriptPath
 	}
-	s.Ended = time.Now().UTC()
+	s.Ended, s.EndReason = time.Now().UTC(), "session-end"
 	if s.TranscriptPath != "" {
 		if u, err := transcript.Summarize(s.TranscriptPath); err == nil {
 			s.Usage = &u
@@ -119,16 +174,8 @@ func SessionEnd(in io.Reader, cfg Config, dir string, notify func(title, msg str
 	if err := s.Save(dir); err != nil {
 		return nil
 	}
-	n := Measured(dir)
-	marker := filepath.Join(dir, "notified")
-	if n >= cfg.Target {
-		if _, err := os.Stat(marker); os.IsNotExist(err) {
-			if notify != nil {
-				notify("detour", fmt.Sprintf("%d sesiones medidas: ya se pueden comparar los resultados (detour trial report)", n))
-			}
-			_ = os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644)
-		}
-	}
+	Sweep(dir, time.Now())
+	notifyAtTarget(cfg, dir, notify)
 	return nil
 }
 

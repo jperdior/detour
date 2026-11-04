@@ -112,6 +112,9 @@ type Session struct {
 	Excluded string    `json:"excluded,omitempty"`
 	Started  time.Time `json:"started"`
 	Ended    time.Time `json:"ended,omitempty"`
+	// EndReason is "session-end" (the hook ran) or "stale" (no transcript
+	// activity for StaleAfter: Claude Code died before its hook ran).
+	EndReason string `json:"end_reason,omitempty"`
 	// Usage is measured at SessionEnd; the report measures again from the
 	// transcript, which may have grown if the session was resumed.
 	Usage *transcript.Summary `json:"usage,omitempty"`
@@ -189,9 +192,9 @@ func Begin(cfg Config, dir, id, cwd, source, transcriptPath string) (*Session, e
 		return s, nil
 	}
 	s := &Session{ID: id, Cwd: cwd, Source: source, TranscriptPath: transcriptPath, Started: time.Now().UTC()}
-	if name, ok := MatchProject(cfg, cwd); ok && source == "lazy" && joinedLate(transcriptPath) {
-		// The session ran without the trial until now (it started before
-		// the hooks were installed): half of it would be in neither arm.
+	if name, ok := MatchProject(cfg, cwd); ok && source != "startup" && source != "clear" && joinedLate(transcriptPath) {
+		// The session ran without the trial until now (lazy: it started before
+		// the hooks; resume: an older conversation): it would be in neither arm.
 		s.Excluded = "joined-late: " + name
 		s.Cwd, s.TranscriptPath = "", ""
 	} else if ok {

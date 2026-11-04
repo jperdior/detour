@@ -152,7 +152,7 @@ func cmdHook(args []string) error {
 	case args[0] == "claude" && flag == "--trial":
 		return trial.PreToolUse(os.Stdin, os.Stdout, loadTrial(), trial.Dir(), ledger.Path(), policy.FromEnv())
 	case args[0] == "claude-session-start" && flag == "":
-		return trial.SessionStart(os.Stdin, os.Stdout, loadTrial(), trial.Dir())
+		return trial.SessionStart(os.Stdin, os.Stdout, loadTrial(), trial.Dir(), trial.NotifyMac)
 	case args[0] == "claude-session-end" && flag == "":
 		return trial.SessionEnd(os.Stdin, loadTrial(), trial.Dir(), trial.NotifyMac)
 	}
@@ -179,19 +179,23 @@ func cmdTrial(args []string) error {
 		return err
 	}
 	dir := trial.Dir()
+	trial.Sweep(dir, time.Now())
 	if args[0] == "status" {
 		ss, err := trial.All(dir)
 		if err != nil {
 			return err
 		}
-		arms, open := map[string]int{}, 0
+		arms, open, stale := map[string]int{}, 0, 0
 		for _, s := range ss {
 			if s.Ended.IsZero() {
 				open++
 			}
+			if s.EndReason == "stale" {
+				stale++
+			}
 			arms[s.Arm]++
 		}
-		fmt.Printf("enabled %v, %d/%d measured, %d sessions assigned (%d still open)\n", cfg.Enabled, trial.Measured(dir), cfg.Target, len(ss), open)
+		fmt.Printf("enabled %v, %d/%d measured, %d sessions assigned (%d still open, %d ended without SessionEnd)\n", cfg.Enabled, trial.Measured(dir), cfg.Target, len(ss), open, stale)
 		for _, a := range cfg.Arms {
 			fmt.Printf("  %s: %d\n", a, arms[a])
 		}

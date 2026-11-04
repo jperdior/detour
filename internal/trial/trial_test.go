@@ -64,7 +64,7 @@ func TestArms(t *testing.T) {
 	// Off arm: never denies, logs a shadow block.
 	off := Config{Enabled: true, Arms: []string{ArmOff}, Projects: []Project{{Name: "p", Repo: repo}}}
 	var out bytes.Buffer
-	if err := SessionStart(strings.NewReader(`{"session_id":"s-off","cwd":"`+repo+`","source":"startup"}`), &out, off, state); err != nil || out.Len() != 0 {
+	if err := SessionStart(strings.NewReader(`{"session_id":"s-off","cwd":"`+repo+`","source":"startup"}`), &out, off, state, nil); err != nil || out.Len() != 0 {
 		t.Fatalf("off arm gets no guidance: %q %v", out.String(), err)
 	}
 	PreToolUse(strings.NewReader(payload("s-off", repo, "Read", read)), &out, off, state, lp, base)
@@ -75,7 +75,7 @@ func TestArms(t *testing.T) {
 	// Detour arm: guidance at start, denial on a whole read.
 	on := off
 	on.Arms = []string{ArmDetour}
-	SessionStart(strings.NewReader(`{"session_id":"s-on","cwd":"`+repo+`","source":"startup"}`), &out, on, state)
+	SessionStart(strings.NewReader(`{"session_id":"s-on","cwd":"`+repo+`","source":"startup"}`), &out, on, state, nil)
 	if !strings.Contains(out.String(), "additionalContext") || !strings.Contains(out.String(), "detour read") {
 		t.Fatalf("detour arm needs guidance: %q", out.String())
 	}
@@ -128,7 +128,7 @@ func TestSessionEndMeasuresAndNotifiesOnce(t *testing.T) {
 	notify := func(_, msg string) { notes = append(notes, msg) }
 	for _, id := range []string{"a", "b", "c"} {
 		start := fmt.Sprintf(`{"session_id":%q,"cwd":%q,"source":"startup","transcript_path":%q}`, id, repo, tr)
-		SessionStart(strings.NewReader(start), &bytes.Buffer{}, cfg, state)
+		SessionStart(strings.NewReader(start), &bytes.Buffer{}, cfg, state, nil)
 		SessionEnd(strings.NewReader(fmt.Sprintf(`{"session_id":%q,"transcript_path":%q}`, id, tr)), cfg, state, notify)
 	}
 	if s := Lookup(state, "a"); s.Usage == nil || s.Usage.CostUSD != 4 {
@@ -163,5 +163,35 @@ func TestLateJoinerIsExcluded(t *testing.T) {
 	os.WriteFile(fresh, []byte(fmt.Sprintf(`{"type":"user","timestamp":%q,"message":{"content":"hi"}}`+"\n", time.Now().UTC().Format(time.RFC3339))), 0o644)
 	if s, _ := Begin(cfg, state, "new", repo, "lazy", fresh); !s.InTrial() {
 		t.Fatalf("a fresh session joins: %+v", s)
+	}
+}
+
+func TestSweepEndsStaleSessions(t *testing.T) {
+	repo := gitRepo(t)
+	state := t.TempDir()
+	tr := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(tr, []byte(`{"type":"assistant","timestamp":"2026-11-04T10:00:00Z","message":{"id":"m","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":1000000}}}`+"\n"), 0o644)
+	cfg := Config{Enabled: true, Target: 1, Arms: []string{ArmOff}, Projects: []Project{{Name: "p", Repo: repo}}}
+	SessionStart(strings.NewReader(`{"session_id":"k","cwd":"`+repo+`","source":"startup","transcript_path":"`+tr+`"}`), &bytes.Buffer{}, cfg, state, nil)
+	if Sweep(state, time.Now()) != 0 {
+		t.Fatal("a session active a moment ago is not stale")
+	}
+	old := time.Now().Add(-3 * time.Hour)
+	os.Chtimes(tr, old, old)
+	var notes []string
+	SessionStart(strings.NewReader(`{"session_id":"other","cwd":"`+repo+`","source":"startup"}`), &bytes.Buffer{}, cfg, state, func(_, m string) { notes = append(notes, m) })
+	s := Lookup(state, "k")
+	if s.EndReason != "stale" || s.Usage == nil || s.Usage.CostUSD != 4 || len(notes) != 1 {
+		t.Fatalf("stale session must be ended and measured on the next start: %+v notes=%v", s, notes)
+	}
+}
+
+func TestResumedOldConversationIsExcluded(t *testing.T) {
+	repo := gitRepo(t)
+	tr := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(tr, []byte(`{"type":"user","timestamp":"2026-01-01T10:00:00Z","message":{"content":"hi"}}`+"\n"), 0o644)
+	cfg := Config{Enabled: true, Arms: []string{ArmDetour}, Projects: []Project{{Name: "p", Repo: repo}}}
+	if s, _ := Begin(cfg, t.TempDir(), "r", repo, "resume", tr); s.InTrial() {
+		t.Fatalf("resuming a pre-trial conversation must not join: %+v", s)
 	}
 }
