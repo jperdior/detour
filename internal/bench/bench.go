@@ -36,6 +36,17 @@ type Scenario struct {
 	// "" also skips the project's own settings (plugins, hooks), which keeps
 	// both variants clean when the project enables plugins of its own.
 	SettingSources *string `yaml:"setting_sources"`
+
+	// Editing tasks. Tools extends the allowed tools (Edit and Write are
+	// added automatically when Check is set). Check runs in the checkout after
+	// the session, with DETOUR_SCENARIO_DIR set to the scenario file's
+	// directory (where hidden tests can live); exit 0 means the task is done.
+	// Local checkouts are reset to Ref before every session and after Check.
+	Tools        []string `yaml:"tools"`
+	Check        string   `yaml:"check"`
+	CheckTimeout int      `yaml:"check_timeout_seconds"`
+
+	dir string // directory of the scenario file
 }
 
 func (s Scenario) settingSources() string {
@@ -64,6 +75,12 @@ func LoadScenarios(dir string) ([]Scenario, error) {
 		}
 		if s.Name == "" {
 			s.Name = strings.TrimSuffix(filepath.Base(p), ".yaml")
+		}
+		if abs, err := filepath.Abs(filepath.Dir(p)); err == nil {
+			s.dir = abs
+		}
+		if s.Check != "" && s.Path == "" {
+			return nil, fmt.Errorf("%s: editing scenarios (check) need a local path, so the checkout can be reset", p)
 		}
 		if (s.Repo == "") == (s.Path == "") {
 			return nil, fmt.Errorf("%s: set exactly one of repo or path", p)
@@ -130,6 +147,11 @@ type Result struct {
 	Passed  bool     `json:"passed"`
 	Missing []string `json:"missing,omitempty"`
 	Answer  string   `json:"answer"`
+
+	// Editing tasks: what the session changed and whether Check passed.
+	DiffStat    string `json:"diff_stat,omitempty"`
+	CheckPassed *bool  `json:"check_passed,omitempty"`
+	CheckOutput string `json:"check_output,omitempty"` // tail
 
 	// From detour's ledger for this run.
 	Blocks              int     `json:"blocks"`
@@ -283,7 +305,8 @@ var allowedTools = []string{
 }
 
 // ClaudeArgs builds the command line for one session.
-func ClaudeArgs(prompt, model, variant, pluginDir, settingSources string) []string {
+func ClaudeArgs(prompt, model, variant, pluginDir, settingSources string, extraTools ...string) []string {
+	tools := append(append([]string{}, allowedTools...), extraTools...)
 	args := []string{
 		"-p", prompt,
 		"--output-format", "stream-json", "--verbose",
@@ -292,7 +315,7 @@ func ClaudeArgs(prompt, model, variant, pluginDir, settingSources string) []stri
 		// run in the same clean environment; only project/local apply.
 		"--setting-sources", settingSources,
 		"--strict-mcp-config",
-		"--allowedTools", strings.Join(allowedTools, ","),
+		"--allowedTools", strings.Join(tools, ","),
 	}
 	if model != "" {
 		args = append(args, "--model", model)
@@ -351,7 +374,18 @@ func runOne(ctx context.Context, o Options, s Scenario, variant string, rep int,
 		Scenario: s.Name, Variant: variant, Rep: rep, Model: o.Model, Started: time.Now().UTC(),
 		RunID: fmt.Sprintf("%s-%s-%d-%d", s.Name, variant, rep, time.Now().UnixNano()),
 	}
-	cmd := exec.CommandContext(ctx, o.ClaudeBin, ClaudeArgs(s.Prompt, o.Model, variant, o.PluginDir, s.settingSources())...)
+	if s.Path != "" {
+		if err := resetCheckout(ctx, dir); err != nil {
+			r.Error = err.Error()
+			return r
+		}
+		defer resetCheckout(ctx, dir)
+	}
+	extra := s.Tools
+	if s.Check != "" {
+		extra = append([]string{"Edit", "Write"}, extra...)
+	}
+	cmd := exec.CommandContext(ctx, o.ClaudeBin, ClaudeArgs(s.Prompt, o.Model, variant, o.PluginDir, s.settingSources(), extra...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"PATH="+o.BinDir+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -368,6 +402,15 @@ func runOne(ctx context.Context, o Options, s Scenario, variant string, rep int,
 		return r
 	}
 	r.Passed, r.Missing = Score(s, r.Answer)
+	if s.Check != "" {
+		r.DiffStat = diffStat(ctx, dir)
+		ok, out := runCheck(ctx, s, dir)
+		r.CheckPassed, r.CheckOutput = &ok, out
+		if !ok {
+			r.Passed = false
+			r.Missing = append(r.Missing, "check failed")
+		}
+	}
 
 	events, _ := ledger.Read(ledgerPath)
 	sum := ledger.Summarize(events, func(e ledger.Event) bool { return e.RunID == r.RunID })
@@ -378,6 +421,41 @@ func runOne(ctx context.Context, o Options, s Scenario, variant string, rep int,
 	r.DelegateTokens = sum.PromptTokens + sum.CompletionTokens
 	r.NetCostUSD = r.ClaudeCostUSD + r.DelegateCostUSD
 	return r
+}
+
+// resetCheckout returns a local checkout to its pinned commit, dropping edits
+// and untracked files but keeping ignored ones (env files, caches).
+func resetCheckout(ctx context.Context, dir string) error {
+	for _, args := range [][]string{{"reset", "-q", "--hard"}, {"clean", "-fdq"}} {
+		if out, err := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...).CombinedOutput(); err != nil {
+			return fmt.Errorf("reset %s: %v: %s", dir, err, out)
+		}
+	}
+	return nil
+}
+
+func diffStat(ctx context.Context, dir string) string {
+	_ = exec.CommandContext(ctx, "git", "-C", dir, "add", "-A", "-N").Run() // count new files too
+	out, _ := exec.CommandContext(ctx, "git", "-C", dir, "diff", "--shortstat").Output()
+	return strings.TrimSpace(string(out))
+}
+
+func runCheck(ctx context.Context, s Scenario, dir string) (bool, string) {
+	timeout := time.Duration(s.CheckTimeout) * time.Second
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(cctx, "sh", "-c", s.Check)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "DETOUR_SCENARIO_DIR="+s.dir)
+	out, err := cmd.CombinedOutput()
+	tail := string(out)
+	if len(tail) > 2000 {
+		tail = "…" + tail[len(tail)-2000:]
+	}
+	return err == nil, tail
 }
 
 func checkoutScenario(ctx context.Context, cacheDir string, s Scenario) (string, error) {

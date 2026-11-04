@@ -198,3 +198,72 @@ func TestSettingSourcesDefaultAndEmpty(t *testing.T) {
 		t.Fatal("setting sources")
 	}
 }
+
+func TestEditScenarioResetsAndChecks(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "repo")
+	run := func(dir string, args ...string) {
+		t.Helper()
+		if out, err := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	os.MkdirAll(repo, 0o755)
+	run(repo, "init", "-q")
+	os.WriteFile(filepath.Join(repo, "a.txt"), []byte("v1\n"), 0o644)
+	run(repo, "add", ".")
+	run(repo, "commit", "-qm", "v1")
+	out, _ := exec.Command("git", "-C", repo, "rev-parse", "HEAD").Output()
+	ref := strings.TrimSpace(string(out))
+
+	// Scenario dir with a hidden file the check copies in.
+	scen := filepath.Join(tmp, "scen")
+	os.MkdirAll(scen, 0o755)
+	os.WriteFile(filepath.Join(scen, "hidden.txt"), []byte("secret"), 0o644)
+	yaml := "name: e\npath: " + repo + "\nref: " + ref + "\nprompt: p\n" +
+		"check: cp \"$DETOUR_SCENARIO_DIR/hidden.txt\" . && grep -q v2 a.txt\n"
+	os.WriteFile(filepath.Join(scen, "e.yaml"), []byte(yaml), 0o644)
+	ss, err := LoadScenarios(scen)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Fake agent: edits a.txt to v2 and records its allowed tools.
+	bin := filepath.Join(tmp, "claude")
+	script := "#!/bin/sh\necho \"$@\" > \"" + tmp + "/args\"\necho v2 > a.txt\necho '{\"type\":\"result\",\"result\":\"done\"}'\n"
+	os.WriteFile(bin, []byte(script), 0o755)
+
+	rs, err := Run(context.Background(), Options{
+		Scenarios: ss, Variants: []string{Baseline}, Reps: 2,
+		OutDir: filepath.Join(tmp, "out"), CacheDir: filepath.Join(tmp, "cache"),
+		PluginDir: tmp, BinDir: tmp, ClaudeBin: bin,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range rs {
+		if r.Error != "" || r.CheckPassed == nil || !*r.CheckPassed || !r.Passed || !strings.Contains(r.DiffStat, "1 file changed") {
+			t.Fatalf("result %+v", r)
+		}
+	}
+	args, _ := os.ReadFile(filepath.Join(tmp, "args"))
+	if !strings.Contains(string(args), "Edit,Write") {
+		t.Fatalf("edit tools not allowed: %s", args)
+	}
+	// After the run the checkout is back at v1 with no hidden file.
+	wt, _ := Worktree(context.Background(), filepath.Join(tmp, "cache"), repo, ref)
+	if b, _ := os.ReadFile(filepath.Join(wt, "a.txt")); string(b) != "v1\n" {
+		t.Fatalf("checkout not reset: %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "hidden.txt")); err == nil {
+		t.Fatal("hidden file left behind")
+	}
+}
+
+func TestCheckRequiresLocalPath(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "x.yaml"), []byte("name: x\nrepo: https://example.com/r\nref: v1\nprompt: p\ncheck: true\n"), 0o644)
+	if _, err := LoadScenarios(dir); err == nil {
+		t.Fatal("expected error")
+	}
+}
