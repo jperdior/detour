@@ -8,7 +8,7 @@ detour is meant to make Claude Code cheaper by having a small model (Haiku) read
   - **off**: nothing changes. detour only notes which reads it would have blocked.
   - **detour**: whole reads of large code files (over 350 lines) are blocked, and Claude asks Haiku about them instead.
 - **The measurement.** When the session ends, detour measures its cost at list price from the transcript Claude Code already keeps on your machine.
-- **The results.** After 100 sessions you get a desktop notification. You can then send the anonymized results with one command, after reading them.
+- **The results.** After 100 sessions, Claude tells you at the start of your next session and asks whether to send the anonymized results. It shows you the report and publishes it only with your permission. It asks again in each new session until the report is sent; say no and it drops the subject for that session.
 
 Work as usual; there is nothing else to do.
 
@@ -53,7 +53,7 @@ In Claude Code, paste:
 
 > Set me up for the detour field trial following https://raw.githubusercontent.com/jperdior/detour/main/docs/TRIAL.md (section "Instructions for the agent").
 
-## When you get the notification
+## When Claude tells you the trial is done
 
 ```bash
 detour trial report            # your own results
@@ -91,7 +91,7 @@ You are helping the user join the detour field trial. Follow these steps in orde
 6. **Verify.** Run `detour trial status`. It should print `enabled true` and the projects. Tell the user:
    - The trial starts with their next new session in those repositories; this session is not part of it.
    - They work as usual.
-   - After 100 sessions they get a notification, and then run `detour trial share`.
+   - After 100 sessions, Claude will tell them at the start of a session and ask permission to send the report.
 7. **When they later ask you to share the results:**
    - Run `detour trial share --dry-run` and show them the report.
    - Ask for explicit confirmation that it may be published as a public GitHub issue.

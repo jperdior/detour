@@ -384,6 +384,7 @@ func cmdTrialShare(args []string) error {
 		if err != nil {
 			return fmt.Errorf("gh issue create: %v: %s", err, out)
 		}
+		trial.MarkShared(dir)
 		fmt.Printf("Sent, thank you: %s", out)
 		return nil
 	}
@@ -394,6 +395,7 @@ func cmdTrialShare(args []string) error {
 	}
 	fmt.Printf("gh is not set up, so open this link and press Submit:\n%s\n", u)
 	openBrowser(u)
+	trial.MarkShared(dir)
 	return nil
 }
 

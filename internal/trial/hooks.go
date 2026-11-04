@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jperdior/detour/internal/hook"
@@ -79,7 +80,7 @@ func Sweep(dir string, now time.Time) int {
 func notifyAtTarget(cfg Config, dir string, notify func(title, msg string)) {
 	n := Measured(dir)
 	marker := filepath.Join(dir, "notified")
-	if n < cfg.Target {
+	if cfg.Target <= 0 || n < cfg.Target {
 		return
 	}
 	if _, err := os.Stat(marker); os.IsNotExist(err) {
@@ -89,6 +90,14 @@ func notifyAtTarget(cfg Config, dir string, notify func(title, msg string)) {
 		_ = os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644)
 	}
 }
+
+// shareRequest asks the agent to offer sending the report, once the trial
+// has reached its target and until the user has sent it.
+const shareRequest = `The user takes part in the detour field trial, which has now measured %d sessions. In your first reply in this session, before anything else, tell the user in one or two sentences and ask whether they want to send the anonymized results now. If they say yes:
+1. Run detour trial share --dry-run and show them the report. It holds only numbers per session: no code, paths, prompts or project names.
+2. Ask for explicit permission to publish it as a public GitHub issue in jperdior/detour.
+3. Only with that permission, run detour trial share --yes.
+If they say no or not now, drop the subject for the rest of the session.`
 
 // SessionStart assigns the session an arm and, in the detour arm, gives the
 // agent the guidance. It also ends stale sessions. It never fails the
@@ -105,18 +114,45 @@ func SessionStart(in io.Reader, out io.Writer, cfg Config, dir string, notify fu
 		notifyAtTarget(cfg, dir, notify)
 	}
 	s, err := Begin(cfg, dir, hi.SessionID, hi.Cwd, hi.Source, hi.TranscriptPath)
-	if err != nil || !s.InTrial() || s.Arm != ArmDetour {
+	if err != nil || !s.InTrial() {
 		return nil
 	}
-	var o struct {
-		HookSpecificOutput struct {
-			HookEventName     string `json:"hookEventName"`
-			AdditionalContext string `json:"additionalContext"`
-		} `json:"hookSpecificOutput"`
+	type specific struct {
+		HookEventName     string `json:"hookEventName"`
+		AdditionalContext string `json:"additionalContext"`
 	}
-	o.HookSpecificOutput.HookEventName = "SessionStart"
-	o.HookSpecificOutput.AdditionalContext = guidance
+	var o struct {
+		SystemMessage      string    `json:"systemMessage,omitempty"`
+		HookSpecificOutput *specific `json:"hookSpecificOutput,omitempty"`
+	}
+	// Once the target is reached, remind the user in every new trial
+	// session until they share: a desktop notification is easy to miss.
+	var context []string
+	if s.Arm == ArmDetour {
+		context = append(context, guidance)
+	}
+	if n := Measured(dir); cfg.Target > 0 && n >= cfg.Target && !HasShared(dir) {
+		o.SystemMessage = fmt.Sprintf("detour trial: %d sessions measured. Thank you! See your results with `detour trial report` and send them with `detour trial share`.", n)
+		context = append(context, fmt.Sprintf(shareRequest, n))
+	}
+	if len(context) > 0 {
+		o.HookSpecificOutput = &specific{HookEventName: "SessionStart", AdditionalContext: strings.Join(context, "\n\n")}
+	}
+	if o.SystemMessage == "" && o.HookSpecificOutput == nil {
+		return nil
+	}
 	return json.NewEncoder(out).Encode(o)
+}
+
+// HasShared reports whether the user has sent a report.
+func HasShared(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "shared"))
+	return err == nil
+}
+
+// MarkShared records that a report was sent.
+func MarkShared(dir string) {
+	_ = os.WriteFile(filepath.Join(dir, "shared"), []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644)
 }
 
 // PreToolUse applies the session's arm. Sessions outside the trial pass

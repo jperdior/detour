@@ -204,3 +204,27 @@ func TestProfileFromConfigDir(t *testing.T) {
 		}
 	}
 }
+
+func TestReminderInSessionUntilShared(t *testing.T) {
+	repo := gitRepo(t)
+	state := t.TempDir()
+	tr := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(tr, []byte(`{"type":"assistant","timestamp":"2026-11-04T10:00:00Z","message":{"id":"m","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":10}}}`+"\n"), 0o644)
+	cfg := Config{Enabled: true, Target: 1, Arms: []string{ArmOff}, Projects: []Project{{Name: "p", Repo: repo}}}
+	start := func(id string) string {
+		var out bytes.Buffer
+		SessionStart(strings.NewReader(fmt.Sprintf(`{"session_id":%q,"cwd":%q,"source":"startup","transcript_path":%q}`, id, repo, tr)), &out, cfg, state, nil)
+		return out.String()
+	}
+	if out := start("a"); out != "" {
+		t.Fatalf("no reminder before the target, and the off arm gets no guidance: %q", out)
+	}
+	SessionEnd(strings.NewReader(`{"session_id":"a"}`), cfg, state, nil)
+	if out := start("b"); !strings.Contains(out, "systemMessage") || !strings.Contains(out, "share --dry-run") || strings.Contains(out, "reads large files through detour") {
+		t.Fatalf("reminder and share request expected, without detour guidance in the off arm: %q", out)
+	}
+	MarkShared(state)
+	if out := start("c"); out != "" {
+		t.Fatalf("no reminder after sharing: %q", out)
+	}
+}
