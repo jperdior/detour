@@ -8,7 +8,7 @@ detour is meant to make Claude Code cheaper by having a small model (Haiku) read
   - **off**: nothing changes. detour only notes which reads it would have blocked.
   - **detour**: whole reads of large code files (over 350 lines) are blocked, and Claude asks Haiku about them instead.
 - **The measurement.** When the session ends, detour measures its cost at list price from the transcript Claude Code already keeps on your machine.
-- **The results.** After 100 sessions, Claude tells you at the start of your next session and asks whether to send the anonymized results. It shows you the report and publishes it only with your permission. It asks again in each new session until the report is sent; say no and it drops the subject for that session.
+- **The end.** After 100 sessions the trial ends and detour switches off. At the start of your next session Claude tells you and asks whether to send the anonymized results; it shows you the report and publishes it only with your permission. Then it offers to remove detour. If you say "not now", it asks again in your next session.
 
 Work as usual; there is nothing else to do.
 
@@ -61,12 +61,12 @@ detour trial share --dry-run   # exactly what would be sent
 detour trial share             # send it (asks before publishing)
 ```
 
-You can share again later; each report replaces your previous one in the combined results.
+Then remove it: `detour trial uninstall` cleans every Claude Code profile setup installed into.
 
 ## Pause or remove
 
 - **Pause:** set `enabled: false` in `~/.config/detour/trial.yaml`.
-- **Remove:** `detour trial uninstall` (add `--config-dir` for each profile). This removes the hooks and keeps your measurements, so you can still share them.
+- **Remove:** `detour trial uninstall`. It removes the hooks from every profile setup installed into and keeps your measurements, so you can still share them.
 
 ---
 

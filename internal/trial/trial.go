@@ -39,6 +39,9 @@ type Config struct {
 	// whatever the flags or environment say. It must run through Claude Code.
 	DelegateModel string    `yaml:"delegate_model"`
 	Projects      []Project `yaml:"projects"`
+	// ConfigDirs are the Claude Code config dirs the hooks were installed
+	// in, so uninstall can clean every profile.
+	ConfigDirs []string `yaml:"config_dirs,omitempty"`
 }
 
 // Project is a repository in the trial. Its worktrees count too.
@@ -200,6 +203,10 @@ func Begin(cfg Config, dir, id, cwd, source, transcriptPath string) (*Session, e
 		// the hooks; resume: an older conversation): it would be in neither arm.
 		s.Excluded = "joined-late: " + name
 		s.Cwd, s.TranscriptPath = "", ""
+	} else if ok && Complete(cfg, dir) {
+		// The trial has its sessions: no more draws, detour stays off.
+		s.Excluded = "trial-complete: " + name
+		s.Cwd, s.TranscriptPath = "", ""
 	} else if ok {
 		s.Project = name
 		s.Arm = pick(cfg.Arms)
@@ -209,6 +216,13 @@ func Begin(cfg Config, dir, id, cwd, source, transcriptPath string) (*Session, e
 		s.Cwd, s.TranscriptPath = "", ""
 	}
 	return s, s.Save(dir)
+}
+
+// Complete reports whether the trial has reached its target. From then on
+// new sessions are not assigned an arm; sessions already running keep
+// theirs until they end.
+func Complete(cfg Config, dir string) bool {
+	return cfg.Target > 0 && Measured(dir) >= cfg.Target
 }
 
 // MatchProject finds the trial project cwd belongs to, through git's common

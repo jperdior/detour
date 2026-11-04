@@ -138,12 +138,15 @@ func TestSessionEndMeasuresAndNotifiesOnce(t *testing.T) {
 		t.Fatalf("notify exactly once at the target: %v", notes)
 	}
 	rows, _ := Rows(state, nil)
-	if len(rows) != 3 || rows[0].Arm != ArmOff {
-		t.Fatalf("rows: %+v", rows)
+	if len(rows) != 2 || rows[0].Arm != ArmOff {
+		t.Fatalf("the third session starts after the target and is not drawn: %+v", rows)
+	}
+	if c := Lookup(state, "c"); c.InTrial() || !strings.HasPrefix(c.Excluded, "trial-complete") {
+		t.Fatalf("session after the target: %+v", c)
 	}
 	var b bytes.Buffer
 	WriteReport(&b, cfg, rows)
-	if !strings.Contains(b.String(), "| off | 3 | 4.000 |") {
+	if !strings.Contains(b.String(), "| off | 2 | 4.000 |") {
 		t.Fatalf("report:\n%s", b.String())
 	}
 }
@@ -226,5 +229,35 @@ func TestReminderInSessionUntilShared(t *testing.T) {
 	MarkShared(state)
 	if out := start("c"); out != "" {
 		t.Fatalf("no reminder after sharing: %q", out)
+	}
+}
+
+func TestDetourStaysOffAfterTheTrial(t *testing.T) {
+	repo := gitRepo(t)
+	os.WriteFile(filepath.Join(repo, "big.go"), []byte(strings.Repeat("x\n", 600)), 0o644)
+	state := t.TempDir()
+	lp := filepath.Join(state, "ledger.jsonl")
+	tr := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(tr, []byte(`{"type":"assistant","timestamp":"2026-11-04T10:00:00Z","message":{"id":"m","model":"claude-opus-5-5","content":[],"usage":{"input_tokens":10}}}`+"\n"), 0o644)
+	cfg := Config{Enabled: true, Target: 1, Arms: []string{ArmDetour}, Projects: []Project{{Name: "p", Repo: repo}}}
+	base := policy.Config{MinLines: 350, FileBudget: 350}
+	read := func(id string) string {
+		var out bytes.Buffer
+		PreToolUse(strings.NewReader(payload(id, repo, "Read", `{"file_path":"big.go"}`)), &out, cfg, state, lp, base)
+		return out.String()
+	}
+	SessionStart(strings.NewReader(fmt.Sprintf(`{"session_id":"open","cwd":%q,"source":"startup","transcript_path":%q}`, repo, tr)), &bytes.Buffer{}, cfg, state, nil)
+	SessionStart(strings.NewReader(fmt.Sprintf(`{"session_id":"first","cwd":%q,"source":"startup","transcript_path":%q}`, repo, tr)), &bytes.Buffer{}, cfg, state, nil)
+	SessionEnd(strings.NewReader(`{"session_id":"first"}`), cfg, state, nil)
+	if !strings.Contains(read("open"), `"deny"`) {
+		t.Fatal("a session that was open when the trial ended keeps its arm")
+	}
+	var out bytes.Buffer
+	SessionStart(strings.NewReader(fmt.Sprintf(`{"session_id":"later","cwd":%q,"source":"startup"}`, repo)), &out, cfg, state, nil)
+	if strings.Contains(out.String(), "reads large files through detour") || !strings.Contains(out.String(), "detour trial uninstall") {
+		t.Fatalf("after the trial: no guidance, but the share and uninstall offer: %q", out.String())
+	}
+	if read("later") != "" {
+		t.Fatal("detour is off in sessions started after the trial")
 	}
 }

@@ -85,7 +85,7 @@ func notifyAtTarget(cfg Config, dir string, notify func(title, msg string)) {
 	}
 	if _, err := os.Stat(marker); os.IsNotExist(err) {
 		if notify != nil {
-			notify("detour", fmt.Sprintf("%d sessions measured. See your results with: detour trial report. Share them with: detour trial share", n))
+			notify("detour", fmt.Sprintf("Trial finished: %d sessions measured, detour is off now. Next time you open Claude Code it will offer to send the results.", n))
 		}
 		_ = os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644)
 	}
@@ -93,11 +93,11 @@ func notifyAtTarget(cfg Config, dir string, notify func(title, msg string)) {
 
 // shareRequest asks the agent to offer sending the report, once the trial
 // has reached its target and until the user has sent it.
-const shareRequest = `The user takes part in the detour field trial, which has now measured %d sessions. In your first reply in this session, before anything else, tell the user in one or two sentences and ask whether they want to send the anonymized results now. If they say yes:
+const shareRequest = `The user took part in the detour field trial. It has finished: %d sessions were measured, and detour no longer runs in their sessions. In your first reply in this session, before anything else, tell the user in one or two sentences and ask whether they want to send the anonymized results now. If they say yes:
 1. Run detour trial share --dry-run and show them the report. It holds only numbers per session: no code, paths, prompts or project names.
 2. Ask for explicit permission to publish it as a public GitHub issue in jperdior/detour.
 3. Only with that permission, run detour trial share --yes.
-If they say no or not now, drop the subject for the rest of the session.`
+After sending, or if they do not want to send it at all, offer to remove detour with detour trial uninstall, and run it only if they agree. If they say not now, drop the subject for the rest of the session.`
 
 // SessionStart assigns the session an arm and, in the detour arm, gives the
 // agent the guidance. It also ends stale sessions. It never fails the
@@ -114,7 +114,7 @@ func SessionStart(in io.Reader, out io.Writer, cfg Config, dir string, notify fu
 		notifyAtTarget(cfg, dir, notify)
 	}
 	s, err := Begin(cfg, dir, hi.SessionID, hi.Cwd, hi.Source, hi.TranscriptPath)
-	if err != nil || !s.InTrial() {
+	if err != nil || !(s.InTrial() || strings.HasPrefix(s.Excluded, "trial-complete")) {
 		return nil
 	}
 	type specific struct {
@@ -131,8 +131,8 @@ func SessionStart(in io.Reader, out io.Writer, cfg Config, dir string, notify fu
 	if s.Arm == ArmDetour {
 		context = append(context, guidance)
 	}
-	if n := Measured(dir); cfg.Target > 0 && n >= cfg.Target && !HasShared(dir) {
-		o.SystemMessage = fmt.Sprintf("detour trial: %d sessions measured. Thank you! See your results with `detour trial report` and send them with `detour trial share`.", n)
+	if n := Measured(dir); Complete(cfg, dir) && !HasShared(dir) {
+		o.SystemMessage = fmt.Sprintf("detour trial finished: %d sessions measured, detour is off now. Thank you! See your results with `detour trial report`, send them with `detour trial share`, remove detour with `detour trial uninstall`.", n)
 		context = append(context, fmt.Sprintf(shareRequest, n))
 	}
 	if len(context) > 0 {

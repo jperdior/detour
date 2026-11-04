@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -292,6 +293,12 @@ func cmdTrialSetup(args []string) error {
 			return err
 		}
 		fmt.Printf("hooks installed in %s (backup: settings.json.before-detour)\n", path)
+		if !slices.Contains(cfg.ConfigDirs, d) {
+			cfg.ConfigDirs = append(cfg.ConfigDirs, d)
+		}
+	}
+	if err := trial.SaveConfig(trial.ConfigPath(), cfg); err != nil {
+		return err
 	}
 	fmt.Printf("trial config: %s\nprojects:\n", trial.ConfigPath())
 	for _, p := range cfg.Projects {
@@ -309,9 +316,13 @@ Progress: detour trial status    Pause: set enabled: false in the config    Remo
 func cmdTrialUninstall(args []string) error {
 	fs := flag.NewFlagSet("trial uninstall", flag.ExitOnError)
 	var dirs multiFlag
-	fs.Var(&dirs, "config-dir", "Claude Code config dir to remove the hooks from (repeatable)")
+	fs.Var(&dirs, "config-dir", "Claude Code config dir to remove the hooks from (repeatable; default: every dir setup installed in)")
 	fs.Parse(args)
-	for _, d := range configDirs(dirs) {
+	targets := configDirs(dirs)
+	if cfg, err := trial.LoadConfig(trial.ConfigPath()); err == nil && len(dirs) == 0 && len(cfg.ConfigDirs) > 0 {
+		targets = cfg.ConfigDirs
+	}
+	for _, d := range targets {
 		path, err := trial.Uninstall(d)
 		if err != nil {
 			return err
@@ -386,6 +397,9 @@ func cmdTrialShare(args []string) error {
 		}
 		trial.MarkShared(dir)
 		fmt.Printf("Sent, thank you: %s", out)
+		if trial.Complete(cfg, dir) {
+			fmt.Println("The trial is over. To remove detour: detour trial uninstall")
+		}
 		return nil
 	}
 	u := trial.NewIssueURL(shareRepo, sh.Title(), body)
