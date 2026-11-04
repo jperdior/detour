@@ -113,3 +113,27 @@ func TestClaudeBash(t *testing.T) {
 		t.Fatalf("expected deny, got %q", out)
 	}
 }
+
+func TestClaudeBlockOnly(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "big.go"), []byte(strings.Repeat("x\n", 2000)), 0o644)
+	lp := filepath.Join(dir, "state", "ledger.jsonl")
+	cfg := policy.Config{MinLines: 350, FileBudget: 350, BlockOnly: true}
+	read := func(offset, limit int) string {
+		var out bytes.Buffer
+		payload := fmt.Sprintf(`{"session_id":"s1","cwd":%q,"tool_name":"Read","tool_input":{"file_path":"big.go","offset":%d,"limit":%d}}`, dir, offset, limit)
+		if err := Claude(strings.NewReader(payload), &out, cfg, lp); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+	out := read(0, 0)
+	if !strings.Contains(out, "Grep") || strings.Contains(out, "detour read") || strings.Contains(out, "left") {
+		t.Fatalf("block-only reason must not offer delegation or a budget: %q", out)
+	}
+	for i := 0; i < 3; i++ { // no budget: chunks keep passing
+		if out := read(i*300, 300); out != "" {
+			t.Fatalf("chunk %d should pass in block-only mode: %q", i, out)
+		}
+	}
+}

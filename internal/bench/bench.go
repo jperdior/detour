@@ -103,7 +103,11 @@ func LoadScenarios(dir string) ([]Scenario, error) {
 const (
 	Baseline = "baseline" // plain Claude Code
 	Detour   = "detour"   // Claude Code + detour plugin (hook + skill)
+	Block    = "block"    // Claude Code + hook only: blocks whole reads, no delegation
 )
+
+// AllVariants in report order.
+var AllVariants = []string{Baseline, Block, Detour}
 
 // Options for a run.
 type Options struct {
@@ -114,9 +118,11 @@ type Options struct {
 	OutDir    string
 	CacheDir  string // where fixture repos are cloned
 	PluginDir string // detour's Claude Code plugin
-	BinDir    string // directory holding the detour binary, put first on PATH
-	ClaudeBin string
-	Log       func(format string, args ...any)
+	// BlockPluginDir: the hook-only plugin for the block variant.
+	BlockPluginDir string
+	BinDir         string // directory holding the detour binary, put first on PATH
+	ClaudeBin      string
+	Log            func(format string, args ...any)
 }
 
 // Result is one session.
@@ -320,7 +326,7 @@ func ClaudeArgs(prompt, model, variant, pluginDir, settingSources string, extraT
 	if model != "" {
 		args = append(args, "--model", model)
 	}
-	if variant == Detour {
+	if variant != Baseline {
 		args = append(args, "--plugin-dir", pluginDir)
 	}
 	return args
@@ -332,7 +338,7 @@ func ClaudeArgs(prompt, model, variant, pluginDir, settingSources string, extraT
 func Run(ctx context.Context, o Options) ([]Result, error) {
 	// Sessions run inside the fixture checkout, so every path handed to them
 	// (the ledger above all) must be absolute.
-	for _, p := range []*string{&o.OutDir, &o.PluginDir, &o.BinDir, &o.CacheDir} {
+	for _, p := range []*string{&o.OutDir, &o.PluginDir, &o.BlockPluginDir, &o.BinDir, &o.CacheDir} {
 		abs, err := filepath.Abs(*p)
 		if err != nil {
 			return nil, err
@@ -385,7 +391,11 @@ func runOne(ctx context.Context, o Options, s Scenario, variant string, rep int,
 	if s.Check != "" {
 		extra = append([]string{"Edit", "Write"}, extra...)
 	}
-	cmd := exec.CommandContext(ctx, o.ClaudeBin, ClaudeArgs(s.Prompt, o.Model, variant, o.PluginDir, s.settingSources(), extra...)...)
+	plugin := o.PluginDir
+	if variant == Block {
+		plugin = o.BlockPluginDir
+	}
+	cmd := exec.CommandContext(ctx, o.ClaudeBin, ClaudeArgs(s.Prompt, o.Model, variant, plugin, s.settingSources(), extra...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"PATH="+o.BinDir+string(os.PathListSeparator)+os.Getenv("PATH"),

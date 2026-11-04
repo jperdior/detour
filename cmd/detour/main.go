@@ -27,7 +27,8 @@ const usage = `detour: delegate bulk file reading from coding agents to cheap mo
 
 Usage:
   detour read -q QUESTION FILE...      answer a question about files with a cheap model
-  detour hook claude                   Claude Code PreToolUse hook (reads JSON on stdin)
+  detour hook claude [--block-only]    Claude Code PreToolUse hook (reads JSON on stdin);
+                                       --block-only blocks without offering delegation
   detour bench run [flags]             A/B benchmark: Claude Code with and without detour
   detour bench report RESULTS.jsonl    print a markdown report
   detour stats                         summarise the ledger
@@ -114,10 +115,12 @@ func cmdRead(args []string) error {
 }
 
 func cmdHook(args []string) error {
-	if len(args) != 1 || args[0] != "claude" {
-		return fmt.Errorf("usage: detour hook claude   (only Claude Code is supported for now)")
+	if len(args) < 1 || args[0] != "claude" || (len(args) == 2 && args[1] != "--block-only") || len(args) > 2 {
+		return fmt.Errorf("usage: detour hook claude [--block-only]   (only Claude Code is supported for now)")
 	}
-	return hook.Claude(os.Stdin, os.Stdout, policy.FromEnv(), ledger.Path())
+	cfg := policy.FromEnv()
+	cfg.BlockOnly = len(args) == 2
+	return hook.Claude(os.Stdin, os.Stdout, cfg, ledger.Path())
 }
 
 func cmdStats() error {
@@ -203,7 +206,7 @@ func cmdBench(args []string) error {
 	}
 	vs := strings.Split(*variants, ",")
 	for _, v := range vs {
-		if v != bench.Baseline && v != bench.Detour {
+		if v != bench.Baseline && v != bench.Detour && v != bench.Block {
 			return fmt.Errorf("unknown variant %q", v)
 		}
 		if v == bench.Detour && os.Getenv("DEEPSEEK_API_KEY") == "" && os.Getenv("DETOUR_MODEL") == "" && os.Getenv("DETOUR_CONFIG") == "" {
@@ -224,16 +227,17 @@ func cmdBench(args []string) error {
 
 	fmt.Fprintf(os.Stderr, "running %d scenarios × %d variants × %d reps with model %s → %s\n", len(ss), len(vs), *reps, *model, *out)
 	rs, err := bench.Run(context.Background(), bench.Options{
-		Scenarios: ss,
-		Variants:  vs,
-		Reps:      *reps,
-		Model:     *model,
-		OutDir:    *out,
-		CacheDir:  filepath.Join(cache, "detour", "bench"),
-		PluginDir: filepath.Join(root, "plugin"),
-		BinDir:    filepath.Dir(exe),
-		ClaudeBin: *claudeBin,
-		Log:       func(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...) },
+		Scenarios:      ss,
+		Variants:       vs,
+		Reps:           *reps,
+		Model:          *model,
+		OutDir:         *out,
+		CacheDir:       filepath.Join(cache, "detour", "bench"),
+		PluginDir:      filepath.Join(root, "plugin"),
+		BlockPluginDir: filepath.Join(root, "plugin-block"),
+		BinDir:         filepath.Dir(exe),
+		ClaudeBin:      *claudeBin,
+		Log:            func(f string, a ...any) { fmt.Fprintf(os.Stderr, f+"\n", a...) },
 	})
 	if len(rs) > 0 {
 		f, ferr := os.Create(filepath.Join(*out, "report.md"))

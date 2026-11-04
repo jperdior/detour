@@ -1,0 +1,8 @@
+{
+  "name": "detour-block",
+  "version": "0.1.0",
+  "description": "Hook only: blocks whole reads of large files and points the agent to Grep and targeted reads. No delegation. Used as a benchmark variant. Requires the `detour` binary on PATH.",
+  "author": { "name": "jperdior" },
+  "repository": "https://github.com/jperdior/detour",
+  "license": "MIT"
+}

@@ -105,13 +105,13 @@ func WriteMarkdown(w io.Writer, rs []Result) {
 	fmt.Fprintf(w, "- **Net $**: Claude $ + delegate model cost. What you pay with an API key.\n")
 	fmt.Fprintf(w, "- Token columns are Claude tokens by type, which are priced differently (cache reads are much cheaper than input, output much dearer), so they are not summed. Delegate tokens are the cheap model's, in + out.\n\n")
 
-	var baseClaude, detClaude, baseNet, detNet float64
-	var paired int
+	sumClaude, sumNet := map[string]float64{}, map[string]float64{}
+	paired := map[string]int{}
 	for _, n := range names {
 		fmt.Fprintf(w, "## %s\n\n", n)
 		fmt.Fprintf(w, "| variant | ok/n | pass | Claude $ | net $ | input | cache write | cache read | output | delegate tok | turns | time s | blocks |\n")
 		fmt.Fprintf(w, "|---|---|---|---|---|---|---|---|---|---|---|---|---|\n")
-		for _, v := range []string{Baseline, Detour} {
+		for _, v := range AllVariants {
 			st := agg[n][v]
 			if st == nil {
 				continue
@@ -124,30 +124,39 @@ func WriteMarkdown(w io.Writer, rs []Result) {
 				mean(st.DelegateTokens), mean(st.Turns), mean(st.DurationS), mean(st.Blocks))
 		}
 		fmt.Fprintf(w, "\nTool calls per session:")
-		for _, v := range []string{Baseline, Detour} {
+		for _, v := range AllVariants {
 			if st := agg[n][v]; st != nil && len(st.Turns) > 0 {
 				fmt.Fprintf(w, " %s: %s.", v, toolSummary(st.Tools, len(st.Turns)))
 			}
 		}
 		fmt.Fprintln(w)
-		b, d := agg[n][Baseline], agg[n][Detour]
-		if b != nil && d != nil && len(b.NetCost) > 0 && len(d.NetCost) > 0 {
+		b := agg[n][Baseline]
+		for _, v := range AllVariants[1:] {
+			d := agg[n][v]
+			if b == nil || d == nil || len(b.NetCost) == 0 || len(d.NetCost) == 0 {
+				continue
+			}
 			bc, dc, bn, dn := mean(b.ClaudeCost), mean(d.ClaudeCost), mean(b.NetCost), mean(d.NetCost)
-			fmt.Fprintf(w, "\nWith detour: Claude $ **%+.1f%%** (%.4f → %.4f), net $ **%+.1f%%** (%.4f → %.4f).\n",
-				pct(bc, dc), bc, dc, pct(bn, dn), bn, dn)
-			baseClaude += bc
-			detClaude += dc
-			baseNet += bn
-			detNet += dn
-			paired++
+			fmt.Fprintf(w, "\nWith %s: Claude $ **%+.1f%%** (%.4f → %.4f), net $ **%+.1f%%** (%.4f → %.4f).\n",
+				v, pct(bc, dc), bc, dc, pct(bn, dn), bn, dn)
+			sumClaude[Baseline+"/"+v] += bc
+			sumClaude[v] += dc
+			sumNet[Baseline+"/"+v] += bn
+			sumNet[v] += dn
+			paired[v]++
 		}
 		fmt.Fprintln(w)
 	}
-	if paired > 0 {
-		fmt.Fprintf(w, "## Overall\n\nSum of per-scenario means across %d scenarios:\n\n", paired)
-		fmt.Fprintf(w, "| | baseline | detour | change |\n|---|---|---|---|\n")
-		fmt.Fprintf(w, "| Claude $ | %.4f | %.4f | **%+.1f%%** |\n", baseClaude, detClaude, pct(baseClaude, detClaude))
-		fmt.Fprintf(w, "| net $ | %.4f | %.4f | **%+.1f%%** |\n", baseNet, detNet, pct(baseNet, detNet))
+	if len(paired) > 0 {
+		fmt.Fprintf(w, "## Overall\n\nSum of per-scenario means, over the scenarios where both variants ran:\n\n")
+		fmt.Fprintf(w, "| variant | scenarios | Claude $ baseline → variant | change | net $ baseline → variant | change |\n|---|---|---|---|---|---|\n")
+		for _, v := range AllVariants[1:] {
+			if paired[v] == 0 {
+				continue
+			}
+			bc, dc, bn, dn := sumClaude[Baseline+"/"+v], sumClaude[v], sumNet[Baseline+"/"+v], sumNet[v]
+			fmt.Fprintf(w, "| %s | %d | %.4f → %.4f | **%+.1f%%** | %.4f → %.4f | **%+.1f%%** |\n", v, paired[v], bc, dc, pct(bc, dc), bn, dn, pct(bn, dn))
+		}
 		fmt.Fprintf(w, "\nWith few repetitions, treat changes smaller than the sd as noise.\n")
 	}
 }

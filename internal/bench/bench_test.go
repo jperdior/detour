@@ -107,7 +107,7 @@ func TestReportDelta(t *testing.T) {
 		"net $ **-50.0%**",    // 0.11 → 0.055
 		"| detour | 1/2 |",
 		"| 2000 |", // baseline mean cache read, its own column
-		"| Claude $ | 0.1100 | 0.0400 | **-63.6%** |",
+		"| detour | 1 | 0.1100 → 0.0400 | **-63.6%** |",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("report lacks %q:\n%s", want, out)
@@ -265,5 +265,12 @@ func TestCheckRequiresLocalPath(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "x.yaml"), []byte("name: x\nrepo: https://example.com/r\nref: v1\nprompt: p\ncheck: true\n"), 0o644)
 	if _, err := LoadScenarios(dir); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestClaudeArgsBlockVariantLoadsGivenPlugin(t *testing.T) {
+	args := strings.Join(ClaudeArgs("q", "opus", Block, "/pb", ""), " ")
+	if !strings.Contains(args, "--plugin-dir /pb") {
+		t.Fatalf("block variant must load its plugin: %s", args)
 	}
 }

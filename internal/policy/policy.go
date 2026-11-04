@@ -25,6 +25,10 @@ type Config struct {
 	// chunks per session before further chunks are blocked too. Without it a
 	// blocked agent simply pages through the file. 0 disables the budget.
 	FileBudget int
+	// BlockOnly blocks whole reads of large files without offering
+	// delegation: the agent is told to use Grep and targeted reads instead.
+	// There is no file budget in this mode, since there is no way out of it.
+	BlockOnly bool
 }
 
 // FromEnv returns the default config, overridden by DETOUR_MIN_LINES and
@@ -147,6 +151,13 @@ func (c Config) CheckBash(command, cwd string) Decision {
 
 func (c Config) reason(files []File) string {
 	var b strings.Builder
+	if c.BlockOnly {
+		for _, f := range files {
+			fmt.Fprintf(&b, "detour: %s has %d lines (limit %d, ~%d tokens). Don't read it whole.\n", f.Path, f.Lines, c.MinLines, f.EstTokens())
+		}
+		fmt.Fprintf(&b, "Find the lines you need with Grep, then Read only those with offset and limit (limit <= %d).", c.MinLines)
+		return b.String()
+	}
 	var paths []string
 	for _, f := range files {
 		fmt.Fprintf(&b, "detour: %s has %d lines (limit %d, ~%d tokens). Don't read it whole.\n", f.Path, f.Lines, c.MinLines, f.EstTokens())
