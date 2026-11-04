@@ -195,3 +195,12 @@ func TestResumedOldConversationIsExcluded(t *testing.T) {
 		t.Fatalf("resuming a pre-trial conversation must not join: %+v", s)
 	}
 }
+
+func TestProfileFromConfigDir(t *testing.T) {
+	for dir, want := range map[string]string{"": "default", "/Users/x/.claude-personal": "personal", "/Users/x/.claude-personal/": "personal", "/opt/cfg": "cfg"} {
+		t.Setenv("CLAUDE_CONFIG_DIR", dir)
+		if got := profile(); got != want {
+			t.Errorf("%q: got %q, want %q", dir, got, want)
+		}
+	}
+}

@@ -5,9 +5,11 @@ package policy
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -107,6 +109,9 @@ func (c Config) CheckBash(command, cwd string) Decision {
 		return Decision{Kind: Allow}
 	}
 	name := filepath.Base(args[0])
+	if name == "git" && len(args) >= 3 && args[1] == "show" {
+		return c.checkGitShow(args[2:], cwd)
+	}
 	if !readers[name] {
 		return Decision{Kind: Allow}
 	}
@@ -150,6 +155,38 @@ func (c Config) CheckBash(command, cwd string) Decision {
 		return Decision{Kind: Partial, Files: large, Lines: count}
 	}
 	return Decision{Kind: Block, Files: large, Reason: c.reason(large)}
+}
+
+// checkGitShow handles `git show REV:PATH`, which prints a whole file at a
+// revision. Other forms of git show (commits, diffs) pass.
+func (c Config) checkGitShow(args []string, cwd string) Decision {
+	var specs []string
+	for _, a := range args {
+		if strings.HasPrefix(a, "-") {
+			return Decision{Kind: Allow} // --stat, --format...: not a plain file dump
+		}
+		if i := strings.Index(a, ":"); i > 0 && i < len(a)-1 {
+			specs = append(specs, a)
+		}
+	}
+	var large []File
+	for _, spec := range specs {
+		out, err := exec.Command("git", "-C", cwd, "cat-file", "-p", spec).Output()
+		if err != nil {
+			continue
+		}
+		n, _ := countLines(bytes.NewReader(out))
+		if n > c.MinLines {
+			path := spec[strings.Index(spec, ":")+1:]
+			large = append(large, File{Path: path, Lines: n, Bytes: int64(len(out))})
+		}
+	}
+	if len(large) == 0 {
+		return Decision{Kind: Allow}
+	}
+	d := Decision{Kind: Block, Files: large, Reason: c.reason(large)}
+	d.Reason += "\nThis was `git show` of another revision. detour read reads the working tree; if it differs from that revision, show only a range: git show REV:PATH | sed -n '120,240p'."
+	return d
 }
 
 func (c Config) reason(files []File) string {
@@ -273,8 +310,30 @@ func countLines(r io.Reader) (int, error) {
 	}
 }
 
+// hasShellOperators reports pipes, redirects, chains and substitutions
+// outside quotes. Inside single quotes nothing is special; inside double
+// quotes only $ and ` are.
 func hasShellOperators(cmd string) bool {
-	return strings.ContainsAny(cmd, "|;&><`$(")
+	var quote rune
+	for _, r := range cmd {
+		switch {
+		case quote == '\'':
+			if r == '\'' {
+				quote = 0
+			}
+		case quote == '"':
+			if r == '"' {
+				quote = 0
+			} else if r == '$' || r == '`' {
+				return true
+			}
+		case r == '\'' || r == '"':
+			quote = r
+		case strings.ContainsRune("|;&><`$()", r):
+			return true
+		}
+	}
+	return false
 }
 
 // splitFields splits a simple command line, honouring single and double quotes.

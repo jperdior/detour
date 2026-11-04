@@ -2,6 +2,7 @@ package policy
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -127,5 +128,47 @@ func TestFromEnv(t *testing.T) {
 	t.Setenv("DETOUR_MIN_LINES", "garbage")
 	if FromEnv().MinLines != DefaultMinLines {
 		t.Fatal("bad value should fall back to default")
+	}
+}
+
+func TestShellOperatorsRespectQuotes(t *testing.T) {
+	for cmd, want := range map[string]bool{
+		`cat "app/(app)/page.tsx"`:   false,
+		`cat 'a|b.go'`:               false,
+		`cat a.go | head`:            true,
+		`cat "$HOME/a.go"`:           true,
+		`cat a.go > b`:               true,
+		`git show "main:a/(x)/b.ts"`: false,
+	} {
+		if got := hasShellOperators(cmd); got != want {
+			t.Errorf("%s: got %v", cmd, got)
+		}
+	}
+}
+
+func TestGitShowOfLargeFileIsBlocked(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v %s", err, out)
+		}
+	}
+	git("init", "-q")
+	os.MkdirAll(filepath.Join(dir, "a", "(x)"), 0o755)
+	os.WriteFile(filepath.Join(dir, "a", "(x)", "big.ts"), []byte(strings.Repeat("x\n", 500)), 0o644)
+	os.WriteFile(filepath.Join(dir, "small.ts"), []byte("x\n"), 0o644)
+	git("add", ".")
+	git("commit", "-q", "-m", "x")
+	c := Config{MinLines: 350}
+	if d := c.CheckBash(`git show "HEAD:a/(x)/big.ts"`, dir); d.Kind != Block || !strings.Contains(d.Reason, "git show") {
+		t.Fatalf("large git show must be blocked: %+v", d)
+	}
+	for _, cmd := range []string{"git show HEAD:small.ts", "git show HEAD", "git show --stat HEAD", "git show HEAD:a/(x)/big.ts | sed -n '1,50p'"} {
+		if d := c.CheckBash(cmd, dir); d.Kind != Allow {
+			t.Fatalf("%s should pass: %+v", cmd, d)
+		}
 	}
 }

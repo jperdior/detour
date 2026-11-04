@@ -14,15 +14,15 @@ import (
 
 // Row is one measured session.
 type Row struct {
-	ID, Arm, Project, Origin, Activity string
-	CostUSD                            float64 // agent transcript + Claude-plan delegations
-	DelegateUSD                        float64
-	Tokens                             transcript.Usage // summed over models
-	Calls, Prompts                     int
-	Minutes                            float64
-	Blocks                             int // block, or shadow-block in the off arm
-	Delegations                        int
-	Unpriced                           []string
+	ID, Arm, Project, Origin, Profile, Activity string
+	CostUSD                                     float64 // agent transcript + Claude-plan delegations
+	DelegateUSD                                 float64
+	Tokens                                      transcript.Usage // summed over models
+	Calls, Prompts                              int
+	Minutes                                     float64
+	Blocks                                      int // block, or shadow-block in the off arm
+	Delegations                                 int
+	Unpriced                                    []string
 }
 
 // Rows measures every ended trial session. Transcripts are read again, so a
@@ -52,7 +52,7 @@ func Rows(dir string, events []ledger.Event) ([]Row, error) {
 		if u == nil || u.Calls() == 0 {
 			continue
 		}
-		r := Row{ID: s.ID, Arm: s.Arm, Project: s.Project, Origin: s.Origin, Activity: u.Activity(),
+		r := Row{ID: s.ID, Arm: s.Arm, Project: s.Project, Origin: s.Origin, Profile: s.Profile, Activity: u.Activity(),
 			CostUSD: u.CostUSD, Calls: u.Calls(), Prompts: u.UserPrompts, Unpriced: u.UnpricedModel}
 		if !u.First.IsZero() {
 			r.Minutes = u.Last.Sub(u.First).Minutes()
@@ -106,6 +106,7 @@ func WriteReport(w io.Writer, cfg Config, rows []Row) {
 		{"activity (from tool use)", func(r Row) string { return r.Activity }},
 		{"origin", func(r Row) string { return r.Origin }},
 		{"project", func(r Row) string { return r.Project }},
+		{"profile (Claude account)", func(r Row) string { return r.Profile }},
 	} {
 		fmt.Fprintf(w, "\n## By %s\n\n", dim.name)
 		fmt.Fprintf(w, "| %s |", strings.Split(dim.name, " ")[0])

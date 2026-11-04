@@ -100,10 +100,13 @@ func LoadConfig(path string) (Config, error) {
 
 // Session is one session's record.
 type Session struct {
-	ID             string `json:"session_id"`
-	Project        string `json:"project,omitempty"` // empty: not in the trial
-	Arm            string `json:"arm,omitempty"`
-	Origin         string `json:"origin,omitempty"` // interactive, headless, loop
+	ID      string `json:"session_id"`
+	Project string `json:"project,omitempty"` // empty: not in the trial
+	Arm     string `json:"arm,omitempty"`
+	Origin  string `json:"origin,omitempty"` // interactive, headless, loop
+	// Profile is the Claude Code config dir in use: "default" for ~/.claude,
+	// else the dir name without ".claude-" (two accounts, two profiles).
+	Profile        string `json:"profile,omitempty"`
 	Source         string `json:"source,omitempty"` // SessionStart source, or "lazy"
 	Cwd            string `json:"cwd,omitempty"`
 	TranscriptPath string `json:"transcript_path,omitempty"`
@@ -201,6 +204,7 @@ func Begin(cfg Config, dir, id, cwd, source, transcriptPath string) (*Session, e
 		s.Project = name
 		s.Arm = pick(cfg.Arms)
 		s.Origin = origin()
+		s.Profile = profile()
 	} else {
 		s.Cwd, s.TranscriptPath = "", ""
 	}
@@ -234,6 +238,18 @@ func joinedLate(transcriptPath string) bool {
 	}
 	u, err := transcript.Summarize(transcriptPath)
 	return err == nil && !u.First.IsZero() && time.Since(u.First) > 2*time.Minute
+}
+
+func profile() string {
+	d := os.Getenv("CLAUDE_CONFIG_DIR")
+	if d == "" {
+		return "default"
+	}
+	name := filepath.Base(filepath.Clean(d))
+	if n := strings.TrimPrefix(name, ".claude-"); n != name && n != "" {
+		return n
+	}
+	return name
 }
 
 func origin() string {
