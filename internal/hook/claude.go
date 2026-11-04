@@ -63,7 +63,7 @@ func Claude(in io.Reader, out io.Writer, cfg policy.Config, ledgerPath string) e
 		return nil
 	}
 	budgetDir := filepath.Join(filepath.Dir(ledgerPath), "sessions")
-	useBudget := !cfg.BlockOnly && cfg.FileBudget > 0 && hi.SessionID != "" && len(d.Files) > 0
+	useBudget := !cfg.BlockOnly && !cfg.Shadow && cfg.FileBudget > 0 && hi.SessionID != "" && len(d.Files) > 0
 	if d.Kind == policy.Partial && useBudget {
 		d = chargeBudget(cfg, d, hi.SessionID, budgetDir, hi.Cwd)
 	} else if d.Kind == policy.Block && useBudget {
@@ -81,6 +81,11 @@ func Claude(in io.Reader, out io.Writer, cfg policy.Config, ledgerPath string) e
 	}
 	if d.Kind == policy.Block {
 		ev.Kind = ledger.KindBlock
+	}
+	if cfg.Shadow {
+		ev.Kind = ledger.ShadowPrefix + ev.Kind
+		_ = ledger.Append(ledgerPath, ev)
+		return nil
 	}
 	_ = ledger.Append(ledgerPath, ev) // measurement must never break the agent
 

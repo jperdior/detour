@@ -19,6 +19,7 @@ import (
 	"github.com/jperdior/detour/internal/hook"
 	"github.com/jperdior/detour/internal/ledger"
 	"github.com/jperdior/detour/internal/policy"
+	"github.com/jperdior/detour/internal/trial"
 )
 
 var version = "0.1.0-dev"
@@ -31,6 +32,10 @@ Usage:
                                        --block-only blocks without offering delegation
   detour bench run [flags]             A/B benchmark: Claude Code with and without detour
   detour bench report RESULTS.jsonl    print a markdown report
+  detour hook claude --trial           the same hook, applying the session's field-trial arm
+  detour hook claude-session-start     SessionStart hook: assign a trial arm
+  detour hook claude-session-end       SessionEnd hook: measure the session
+  detour trial status|report           field-trial progress and results
   detour stats                         summarise the ledger
   detour config                        print the default config
   detour version
@@ -59,6 +64,8 @@ func main() {
 		err = cmdBench(os.Args[2:])
 	case "stats":
 		err = cmdStats()
+	case "trial":
+		err = cmdTrial(os.Args[2:])
 	case "config":
 		_, err = os.Stdout.Write(config.Default())
 	case "version", "--version":
@@ -88,16 +95,30 @@ func cmdRead(args []string) error {
 	if err != nil {
 		return err
 	}
+	// In a field-trial session the delegate is fixed by the trial config, and
+	// it must run through Claude Code: trial projects may hold code that must
+	// not reach third-party providers.
+	session := os.Getenv("CLAUDE_CODE_SESSION_ID")
+	inTrial := trial.Lookup(trial.Dir(), session).InTrial()
+	if inTrial {
+		*model = loadTrial().DelegateModel
+		if *model == "" {
+			*model = "haiku"
+		}
+	}
 	r, err := cfg.Resolve(*mode, *model)
 	if err != nil {
 		return err
+	}
+	if inTrial && r.Provider.Type != config.TypeClaudeCLI {
+		return fmt.Errorf("trial sessions may only delegate through Claude Code; %s uses provider type %q", r.ModelKey, r.Provider.Type)
 	}
 	files, err := delegate.LoadFiles(fs.Args())
 	if err != nil {
 		return err
 	}
 	res, err := delegate.Ask(context.Background(), r, *q, files)
-	ev := ledger.Event{Kind: ledger.KindDelegate, Agent: os.Getenv("DETOUR_AGENT"), Mode: *mode, Model: r.ModelKey, Paths: fs.Args()}
+	ev := ledger.Event{Kind: ledger.KindDelegate, SessionID: session, Agent: os.Getenv("DETOUR_AGENT"), Mode: *mode, Model: r.ModelKey, Paths: fs.Args()}
 	if err != nil {
 		ev.Error = err.Error()
 		_ = ledger.Append(ledger.Path(), ev)
@@ -115,12 +136,77 @@ func cmdRead(args []string) error {
 }
 
 func cmdHook(args []string) error {
-	if len(args) < 1 || args[0] != "claude" || (len(args) == 2 && args[1] != "--block-only") || len(args) > 2 {
-		return fmt.Errorf("usage: detour hook claude [--block-only]   (only Claude Code is supported for now)")
+	const u = "usage: detour hook claude [--block-only|--trial] | claude-session-start | claude-session-end"
+	if len(args) == 0 || len(args) > 2 {
+		return fmt.Errorf(u)
 	}
-	cfg := policy.FromEnv()
-	cfg.BlockOnly = len(args) == 2
-	return hook.Claude(os.Stdin, os.Stdout, cfg, ledger.Path())
+	flag := ""
+	if len(args) == 2 {
+		flag = args[1]
+	}
+	switch {
+	case args[0] == "claude" && (flag == "" || flag == "--block-only"):
+		cfg := policy.FromEnv()
+		cfg.BlockOnly = flag == "--block-only"
+		return hook.Claude(os.Stdin, os.Stdout, cfg, ledger.Path())
+	case args[0] == "claude" && flag == "--trial":
+		return trial.PreToolUse(os.Stdin, os.Stdout, loadTrial(), trial.Dir(), ledger.Path(), policy.FromEnv())
+	case args[0] == "claude-session-start" && flag == "":
+		return trial.SessionStart(os.Stdin, os.Stdout, loadTrial(), trial.Dir())
+	case args[0] == "claude-session-end" && flag == "":
+		return trial.SessionEnd(os.Stdin, loadTrial(), trial.Dir(), trial.NotifyMac)
+	}
+	return fmt.Errorf(u)
+}
+
+// loadTrial returns the trial config; a broken file disables the trial
+// rather than breaking sessions.
+func loadTrial() trial.Config {
+	c, err := trial.LoadConfig(trial.ConfigPath())
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "detour:", err)
+		return trial.Config{}
+	}
+	return c
+}
+
+func cmdTrial(args []string) error {
+	if len(args) != 1 || (args[0] != "status" && args[0] != "report") {
+		return fmt.Errorf("usage: detour trial status|report")
+	}
+	cfg, err := trial.LoadConfig(trial.ConfigPath())
+	if err != nil {
+		return err
+	}
+	dir := trial.Dir()
+	if args[0] == "status" {
+		ss, err := trial.All(dir)
+		if err != nil {
+			return err
+		}
+		arms, open := map[string]int{}, 0
+		for _, s := range ss {
+			if s.Ended.IsZero() {
+				open++
+			}
+			arms[s.Arm]++
+		}
+		fmt.Printf("enabled %v, %d/%d measured, %d sessions assigned (%d still open)\n", cfg.Enabled, trial.Measured(dir), cfg.Target, len(ss), open)
+		for _, a := range cfg.Arms {
+			fmt.Printf("  %s: %d\n", a, arms[a])
+		}
+		return nil
+	}
+	events, err := ledger.Read(ledger.Path())
+	if err != nil {
+		return err
+	}
+	rows, err := trial.Rows(dir, events)
+	if err != nil {
+		return err
+	}
+	trial.WriteReport(os.Stdout, cfg, rows)
+	return nil
 }
 
 func cmdStats() error {

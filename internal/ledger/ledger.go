@@ -17,6 +17,9 @@ const (
 	KindBlock    = "block"    // the hook denied a whole-file read
 	KindPartial  = "partial"  // the hook allowed a targeted read of a large file
 	KindDelegate = "delegate" // a question was answered by the cheap model
+	// ShadowPrefix marks what the hook would have done in a shadow session
+	// (field-trial control arm): "shadow-block", "shadow-partial".
+	ShadowPrefix = "shadow-"
 )
 
 // Event is one ledger line.

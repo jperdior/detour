@@ -29,6 +29,9 @@ type Config struct {
 	// delegation: the agent is told to use Grep and targeted reads instead.
 	// There is no file budget in this mode, since there is no way out of it.
 	BlockOnly bool
+	// Shadow logs what the hook would do and never denies anything. It is
+	// the control arm of a field trial.
+	Shadow bool
 }
 
 // FromEnv returns the default config, overridden by DETOUR_MIN_LINES and
