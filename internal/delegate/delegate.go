@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,16 +49,32 @@ func LooksSecret(path string) bool {
 	return false
 }
 
-// File is a file to send.
+// File is a file, or a line range of one, to send.
 type File struct {
 	Path    string
 	Content string
+	Start   int // first line number of Content; 0 or 1 means the whole file
+	Total   int // lines in the whole file, when Content is a range
 }
 
-// LoadFiles reads paths, refusing secrets.
+var rangeSuffix = regexp.MustCompile(`^(.+):(\d+)-(\d+)$`)
+
+// LoadFiles reads paths, refusing secrets. A path may end in :START-END
+// (1-based, inclusive) to send only those lines.
 func LoadFiles(paths []string) ([]File, error) {
 	var out []File
-	for _, p := range paths {
+	for _, arg := range paths {
+		p, start, end := arg, 0, 0
+		if _, err := os.Stat(arg); err != nil {
+			if m := rangeSuffix.FindStringSubmatch(arg); m != nil {
+				p = m[1]
+				start, _ = strconv.Atoi(m[2])
+				end, _ = strconv.Atoi(m[3])
+				if start < 1 || end < start {
+					return nil, fmt.Errorf("%s: bad line range, use FILE:START-END with 1 <= START <= END", arg)
+				}
+			}
+		}
 		if LooksSecret(p) {
 			return nil, fmt.Errorf("%s looks like a secrets file; detour will not send it to another model", p)
 		}
@@ -64,7 +82,23 @@ func LoadFiles(paths []string) ([]File, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, File{Path: p, Content: string(b)})
+		f := File{Path: p, Content: string(b)}
+		if start > 0 {
+			lines := strings.SplitAfter(f.Content, "\n")
+			if lines[len(lines)-1] == "" {
+				lines = lines[:len(lines)-1]
+			}
+			f.Total = len(lines)
+			if start > f.Total {
+				return nil, fmt.Errorf("%s: starts at line %d but the file has %d lines", arg, start, f.Total)
+			}
+			if end > f.Total {
+				end = f.Total
+			}
+			f.Content = strings.Join(lines[start-1:end], "")
+			f.Start = start
+		}
+		out = append(out, f)
 	}
 	return out, nil
 }
@@ -76,9 +110,17 @@ func BuildPrompt(question string, files []File) string {
 	var b strings.Builder
 	for _, f := range files {
 		lines := strings.Split(strings.TrimSuffix(f.Content, "\n"), "\n")
-		fmt.Fprintf(&b, "<file path=%q lines=\"%d\">\n", f.Path, len(lines))
+		first := f.Start
+		if first < 1 {
+			first = 1
+		}
+		if f.Start > 1 || (f.Total > 0 && len(lines) < f.Total) {
+			fmt.Fprintf(&b, "<file path=%q lines=\"%d-%d\" of=\"%d\">\n", f.Path, first, first+len(lines)-1, f.Total)
+		} else {
+			fmt.Fprintf(&b, "<file path=%q lines=\"%d\">\n", f.Path, len(lines))
+		}
 		for i, l := range lines {
-			fmt.Fprintf(&b, "L%d|%s\n", i+1, l)
+			fmt.Fprintf(&b, "L%d|%s\n", first+i, l)
 		}
 		b.WriteString("</file>\n")
 	}

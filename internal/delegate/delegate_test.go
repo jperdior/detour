@@ -119,3 +119,33 @@ func TestAskClaudeCLIError(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestLoadFilesRange(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "big.go")
+	os.WriteFile(p, []byte("a\nb\nc\nd\ne\n"), 0o644)
+
+	fs, err := LoadFiles([]string{p + ":2-4"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fs[0].Path != p || fs[0].Content != "b\nc\nd\n" || fs[0].Start != 2 || fs[0].Total != 5 {
+		t.Fatalf("got %+v", fs[0])
+	}
+	prompt := BuildPrompt("q", fs)
+	if !strings.Contains(prompt, `lines="2-4" of="5"`) || !strings.Contains(prompt, "L2|b\nL3|c\nL4|d\n") {
+		t.Fatalf("prompt:\n%s", prompt)
+	}
+
+	if fs, _ := LoadFiles([]string{p + ":4-99"}); fs[0].Content != "d\ne\n" {
+		t.Fatalf("end past EOF should clamp: %q", fs[0].Content)
+	}
+	for _, bad := range []string{p + ":0-2", p + ":3-2", p + ":9-12"} {
+		if _, err := LoadFiles([]string{bad}); err == nil {
+			t.Errorf("%s should fail", bad)
+		}
+	}
+	if _, err := LoadFiles([]string{filepath.Join(dir, ".env") + ":1-2"}); err == nil || !strings.Contains(err.Error(), "secrets") {
+		t.Fatalf("range must not bypass the secret guard: %v", err)
+	}
+}

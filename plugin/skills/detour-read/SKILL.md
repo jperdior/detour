@@ -14,6 +14,8 @@ detour read -q "<specific question>" path/to/file.go [more files...]
 ```
 
 - Put every file the question needs in one call. One call with three files is cheaper than three calls.
+- If you already know which lines matter (from Grep, or an earlier answer), send only that range: `path/to/file.go:736-1180`. It is faster and cheaper than the whole file.
+- Targeted reads of a large file are capped per session (the denial message says how many lines are left). Once you are blocked, don't try smaller chunks: delegate.
 - Ask a specific question: name the functions, types or behaviour you need. "Explain this file" returns a long, less useful answer.
 - The answer cites lines as `file:L123`. To see exact code, Read only that range: `Read(file, offset=120, limit=40)`.
 

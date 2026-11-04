@@ -82,12 +82,16 @@ func TestClaudeFileBudget(t *testing.T) {
 	if out := read("s2", 0, 300); out != "" {
 		t.Fatalf("budget is per session: %q", out)
 	}
+	// A whole read in s2 now tells the agent only 50 chunked lines are left.
+	if out := read("s2", 0, 0); !strings.Contains(out, "50 are left") {
+		t.Fatalf("whole-read block should state the remaining budget: %q", out)
+	}
 	ev, _ := ledger.Read(lp)
 	kinds := ""
 	for _, e := range ev {
 		kinds += e.Kind + " "
 	}
-	if kinds != "partial partial block partial " {
+	if kinds != "partial partial block partial block " {
 		t.Fatalf("ledger kinds: %q", kinds)
 	}
 }

@@ -62,8 +62,15 @@ func Claude(in io.Reader, out io.Writer, cfg policy.Config, ledgerPath string) e
 	if d.Kind == policy.Allow {
 		return nil
 	}
-	if d.Kind == policy.Partial && cfg.FileBudget > 0 && hi.SessionID != "" && len(d.Files) > 0 {
-		d = chargeBudget(cfg, d, hi.SessionID, filepath.Join(filepath.Dir(ledgerPath), "sessions"), hi.Cwd)
+	budgetDir := filepath.Join(filepath.Dir(ledgerPath), "sessions")
+	useBudget := cfg.FileBudget > 0 && hi.SessionID != "" && len(d.Files) > 0
+	if d.Kind == policy.Partial && useBudget {
+		d = chargeBudget(cfg, d, hi.SessionID, budgetDir, hi.Cwd)
+	} else if d.Kind == policy.Block && useBudget {
+		b := loadBudget(budgetDir, hi.SessionID)
+		for _, f := range d.Files {
+			d.Reason += cfg.BudgetNotice(f, b.Used[budgetKey(f.Path, hi.Cwd)])
+		}
 	}
 	ev := ledger.Event{SessionID: hi.SessionID, Agent: "claude-code", Tool: hi.ToolName, Kind: ledger.KindPartial}
 	for _, f := range d.Files {
@@ -92,21 +99,20 @@ func Claude(in io.Reader, out io.Writer, cfg policy.Config, ledgerPath string) e
 func chargeBudget(cfg policy.Config, d policy.Decision, session, dir, cwd string) policy.Decision {
 	b := loadBudget(dir, session)
 	for _, f := range d.Files {
-		key := f.Path
-		if !filepath.IsAbs(key) && cwd != "" {
-			key = filepath.Join(cwd, key)
-		}
-		if used := b.Used[key]; used+d.Lines > cfg.FileBudget {
+		if used := b.Used[budgetKey(f.Path, cwd)]; used+d.Lines > cfg.FileBudget {
 			return policy.Decision{Kind: policy.Block, Files: d.Files, Reason: cfg.BudgetReason(f, used)}
 		}
 	}
 	for _, f := range d.Files {
-		key := f.Path
-		if !filepath.IsAbs(key) && cwd != "" {
-			key = filepath.Join(cwd, key)
-		}
-		b.Used[key] += d.Lines
+		b.Used[budgetKey(f.Path, cwd)] += d.Lines
 	}
 	_ = b.save()
 	return d
+}
+
+func budgetKey(path, cwd string) string {
+	if !filepath.IsAbs(path) && cwd != "" {
+		return filepath.Join(cwd, path)
+	}
+	return path
 }

@@ -154,8 +154,20 @@ func (c Config) reason(files []File) string {
 	}
 	fmt.Fprintf(&b, "Ask a specific question about it instead, adding any other files the question needs:\n")
 	fmt.Fprintf(&b, "  detour read -q \"<your specific question>\" %s\n", strings.Join(paths, " "))
+	fmt.Fprintf(&b, "If you already know which lines matter (e.g. from Grep), send only that range: %s:120-480\n", shellQuote(files[0].Path))
 	fmt.Fprintf(&b, "The answer cites line numbers. To see or edit exact lines, use Read with offset and limit (limit <= %d).", c.MinLines)
 	return b.String()
+}
+
+// BudgetNotice tells the agent, on a whole-file block, how much of the file
+// it may still read in chunks, so it delegates instead of paging through.
+func (c Config) BudgetNotice(f File, used int) string {
+	left := c.FileBudget - used
+	if left < 0 {
+		left = 0
+	}
+	return fmt.Sprintf("\nTargeted reads of %s are capped at %d lines per session and %d are left. Reading it in chunks will be blocked once they run out, so for anything beyond a small range, use detour read now.",
+		f.Path, c.FileBudget, left)
 }
 
 // BudgetReason is the message when targeted reads of a file exceed the
@@ -163,9 +175,9 @@ func (c Config) reason(files []File) string {
 func (c Config) BudgetReason(f File, used int) string {
 	return fmt.Sprintf("detour: you have already read %d lines of %s (%d lines) in this session; the budget per large file is %d.\n"+
 		"Reading it chunk by chunk costs as much as reading it whole. Ask about the rest instead:\n"+
-		"  detour read -q \"<your specific question>\" %s\n"+
+		"  detour read -q \"<your specific question>\" %s   (or only a range: %s:START-END)\n"+
 		"If you are about to edit, you have already read enough to call Edit on the lines you saw.",
-		used, f.Path, f.Lines, c.FileBudget, shellQuote(f.Path))
+		used, f.Path, f.Lines, c.FileBudget, shellQuote(f.Path), shellQuote(f.Path))
 }
 
 func resolve(path, cwd string) string {
