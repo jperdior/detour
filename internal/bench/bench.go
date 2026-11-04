@@ -22,12 +22,27 @@ import (
 
 // Scenario is one benchmark task.
 type Scenario struct {
-	Name   string   `yaml:"name"`
+	Name string `yaml:"name"`
+	// Where the code comes from: a git URL (cloned once into the cache), or
+	// a local git repository (checked out as a detached worktree, so your
+	// working copy is never touched). Ref pins the commit either way.
 	Repo   string   `yaml:"repo"`
+	Path   string   `yaml:"path"`
 	Ref    string   `yaml:"ref"`
 	Prompt string   `yaml:"prompt"`
 	Expect []string `yaml:"expect"` // case-insensitive regexes the answer must match
 	Notes  string   `yaml:"notes"`
+	// SettingSources is passed to --setting-sources. Default "project,local";
+	// "" also skips the project's own settings (plugins, hooks), which keeps
+	// both variants clean when the project enables plugins of its own.
+	SettingSources *string `yaml:"setting_sources"`
+}
+
+func (s Scenario) settingSources() string {
+	if s.SettingSources == nil {
+		return "project,local"
+	}
+	return *s.SettingSources
 }
 
 // LoadScenarios reads every *.yaml in dir, sorted by file name.
@@ -49,6 +64,13 @@ func LoadScenarios(dir string) ([]Scenario, error) {
 		}
 		if s.Name == "" {
 			s.Name = strings.TrimSuffix(filepath.Base(p), ".yaml")
+		}
+		if (s.Repo == "") == (s.Path == "") {
+			return nil, fmt.Errorf("%s: set exactly one of repo or path", p)
+		}
+		if strings.HasPrefix(s.Path, "~/") {
+			home, _ := os.UserHomeDir()
+			s.Path = filepath.Join(home, s.Path[2:])
 		}
 		for _, e := range s.Expect {
 			if _, err := regexp.Compile("(?i)" + e); err != nil {
@@ -261,14 +283,14 @@ var allowedTools = []string{
 }
 
 // ClaudeArgs builds the command line for one session.
-func ClaudeArgs(prompt, model, variant, pluginDir string) []string {
+func ClaudeArgs(prompt, model, variant, pluginDir, settingSources string) []string {
 	args := []string{
 		"-p", prompt,
 		"--output-format", "stream-json", "--verbose",
 		"--no-session-persistence",
 		// Skip the user's own settings, plugins and hooks so both variants
 		// run in the same clean environment; only project/local apply.
-		"--setting-sources", "project,local",
+		"--setting-sources", settingSources,
 		"--strict-mcp-config",
 		"--allowedTools", strings.Join(allowedTools, ","),
 	}
@@ -306,7 +328,7 @@ func Run(ctx context.Context, o Options) ([]Result, error) {
 	var results []Result
 	for rep := 1; rep <= o.Reps; rep++ {
 		for _, s := range o.Scenarios {
-			dir, err := Checkout(ctx, o.CacheDir, s.Repo, s.Ref)
+			dir, err := checkoutScenario(ctx, o.CacheDir, s)
 			if err != nil {
 				return results, err
 			}
@@ -329,7 +351,7 @@ func runOne(ctx context.Context, o Options, s Scenario, variant string, rep int,
 		Scenario: s.Name, Variant: variant, Rep: rep, Model: o.Model, Started: time.Now().UTC(),
 		RunID: fmt.Sprintf("%s-%s-%d-%d", s.Name, variant, rep, time.Now().UnixNano()),
 	}
-	cmd := exec.CommandContext(ctx, o.ClaudeBin, ClaudeArgs(s.Prompt, o.Model, variant, o.PluginDir)...)
+	cmd := exec.CommandContext(ctx, o.ClaudeBin, ClaudeArgs(s.Prompt, o.Model, variant, o.PluginDir, s.settingSources())...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(),
 		"PATH="+o.BinDir+string(os.PathListSeparator)+os.Getenv("PATH"),
@@ -356,6 +378,32 @@ func runOne(ctx context.Context, o Options, s Scenario, variant string, rep int,
 	r.DelegateTokens = sum.PromptTokens + sum.CompletionTokens
 	r.NetCostUSD = r.ClaudeCostUSD + r.DelegateCostUSD
 	return r
+}
+
+func checkoutScenario(ctx context.Context, cacheDir string, s Scenario) (string, error) {
+	if s.Path != "" {
+		return Worktree(ctx, cacheDir, s.Path, s.Ref)
+	}
+	return Checkout(ctx, cacheDir, s.Repo, s.Ref)
+}
+
+// Worktree checks out ref of the local repository at repoPath as a detached
+// worktree under cacheDir, once, and returns its path. Remove it with
+// `git -C <repo> worktree remove <path>` (or prune after deleting the cache).
+func Worktree(ctx context.Context, cacheDir, repoPath, ref string) (string, error) {
+	name := regexp.MustCompile(`[^A-Za-z0-9._-]+`).ReplaceAllString(filepath.Base(repoPath)+"@"+ref, "_")
+	dir := filepath.Join(cacheDir, "worktrees", name)
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+		return dir, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "worktree", "add", "--detach", dir, ref)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("worktree %s@%s: %v: %s", repoPath, ref, err, out)
+	}
+	return dir, nil
 }
 
 // Checkout clones repo at ref into cacheDir once and returns its path.

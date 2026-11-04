@@ -2,3 +2,4 @@
 /bench/results/
 *.test
 .DS_Store
+/bench/local/

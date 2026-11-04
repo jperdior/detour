@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -59,8 +60,8 @@ func TestScore(t *testing.T) {
 }
 
 func TestClaudeArgsOnlyDetourLoadsPlugin(t *testing.T) {
-	base := ClaudeArgs("q", "sonnet", Baseline, "/p")
-	det := ClaudeArgs("q", "sonnet", Detour, "/p")
+	base := ClaudeArgs("q", "sonnet", Baseline, "/p", "project,local")
+	det := ClaudeArgs("q", "sonnet", Detour, "/p", "project,local")
 	if slices.Contains(base, "--plugin-dir") || !slices.Contains(det, "--plugin-dir") {
 		t.Fatalf("base %v\ndet %v", base, det)
 	}
@@ -81,7 +82,7 @@ func TestLoadScenariosFromRepo(t *testing.T) {
 		t.Fatal("no scenarios")
 	}
 	for _, s := range ss {
-		if s.Repo == "" || s.Ref == "" || s.Prompt == "" || len(s.Expect) == 0 {
+		if (s.Repo == "" && s.Path == "") || s.Ref == "" || s.Prompt == "" || len(s.Expect) == 0 {
 			t.Errorf("incomplete scenario %+v", s)
 		}
 	}
@@ -155,5 +156,45 @@ func TestRunUsesAbsoluteLedgerPath(t *testing.T) {
 	got, _ := os.ReadFile(filepath.Join(tmp, "ledger-env"))
 	if !filepath.IsAbs(strings.TrimSpace(string(got))) {
 		t.Fatalf("DETOUR_LEDGER is not absolute: %q", got)
+	}
+}
+
+func TestWorktreeFromLocalRepo(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "repo")
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("git", append([]string{"-C", repo, "-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	os.MkdirAll(repo, 0o755)
+	git("init", "-q")
+	os.WriteFile(filepath.Join(repo, "a.txt"), []byte("v1\n"), 0o644)
+	git("add", ".")
+	git("commit", "-qm", "v1")
+	ref := git("rev-parse", "HEAD")
+	os.WriteFile(filepath.Join(repo, "a.txt"), []byte("dirty working copy\n"), 0o644)
+
+	dir, err := Worktree(context.Background(), filepath.Join(tmp, "cache"), repo, ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(filepath.Join(dir, "a.txt"))
+	if string(got) != "v1\n" {
+		t.Fatalf("worktree should hold the committed ref, got %q", got)
+	}
+	again, err := Worktree(context.Background(), filepath.Join(tmp, "cache"), repo, ref)
+	if err != nil || again != dir {
+		t.Fatalf("second call should reuse: %v %v", again, err)
+	}
+}
+
+func TestSettingSourcesDefaultAndEmpty(t *testing.T) {
+	empty := ""
+	if (Scenario{}).settingSources() != "project,local" || (Scenario{SettingSources: &empty}).settingSources() != "" {
+		t.Fatal("setting sources")
 	}
 }
