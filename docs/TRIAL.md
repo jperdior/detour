@@ -19,7 +19,7 @@ Work as usual; there is nothing else to do.
   - It holds no code, file paths, prompts, repository names or session ids. Projects appear as `project-1`, `project-2`…
   - It is sent as a public GitHub issue in `jperdior/detour`, under your GitHub account.
 - **Haiku only, through your own Claude Code login**, so delegations count against your own plan like any other usage. Trial sessions never send code to a third-party provider, even if detour is configured for one.
-- **Markdown and text files**, and files outside the repository, are never blocked.
+- **Only source code is affected.** Markdown and text files (specs, plans, ADRs, docs) and files outside the repository are never blocked: Claude reads them whole, as usual.
 - In detour sessions you will sometimes see a `detour:` denial and a `detour read` command. Expect a few extra seconds when Claude delegates.
 
 ## Requirements

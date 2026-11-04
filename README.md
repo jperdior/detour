@@ -18,9 +18,11 @@ The benchmarks use fixed tasks. To learn whether detour saves anything in everyd
 
 ## How it works
 
+> **detour only acts on source code inside the repository.** Markdown and text files (`.md`, `.mdx`, `.txt`, `.rst`, `.adoc`), such as specs, plans, ADRs and docs, are never blocked: the agent reads them whole, as usual, because they are instructions where every word counts. Files outside the repository (Claude Code's saved tool results, scratchpads, `/tmp`) are never blocked either.
+
 | Layer | What it does |
 |---|---|
-| **Hook** (`detour hook claude`) | Claude Code `PreToolUse` on `Read` and `Bash`. Denies whole reads of files over `DETOUR_MIN_LINES` (default 350), including `cat`/`less`/`head`/`tail` with large counts. Targeted reads (`offset` + `limit` ≤ threshold) pass until they add up to `DETOUR_FILE_BUDGET` lines of that file in the session (default 350); after that they are denied too. Fails open on any error. |
+| **Hook** (`detour hook claude`) | Claude Code `PreToolUse` on `Read` and `Bash`. Denies whole reads of source files over `DETOUR_MIN_LINES` (default 350) inside the repository, including `cat`/`less`/`head`/`tail` with large counts and `git show REV:path`. Targeted reads (`offset` + `limit` ≤ threshold) pass until they add up to `DETOUR_FILE_BUDGET` lines of that file in the session (default 350); after that they are denied too. Fails open on any error. |
 | **Delegate** (`detour read`) | Wraps files (or `FILE:START-END` ranges) in `<file>` tags with numbered lines, sends them with the question to the mode's model, prints the answer. Refuses files that look like secrets (`.env`, `*.pem`, keys...). |
 | **Skill** (`detour-read`) | Tells the agent when to delegate and when not to (editing, subtle debugging, small files). |
 | **Ledger** | One JSON line per blocked read, targeted read and delegation, with tokens, cost and latency. `detour stats` summarises it. |
