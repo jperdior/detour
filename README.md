@@ -7,13 +7,15 @@ A hook blocks whole-file reads above a line threshold and tells the agent to ask
 The idea comes from Spotify's [Portal + shunt](https://engineering.atspotify.com/2026/9/portal-by-spotify-cut-my-claude-code-token-usage-by-90) (about 90% fewer tokens on bulk reads in their tests). detour is a self-hosted, provider-agnostic take on it. Other public ports that measured carefully found small or no net savings, so **this project measures first**: the A/B benchmark is the core of v0.
 
 > Status: experimental. Claude Code only, bulk-read only. No server or UI yet (see the roadmap).
+>
+> **Results so far** (Opus agent, Haiku delegate, 100 sessions, all answers correct; [v1](docs/results/2026-11-04-opus-haiku.md), [v2](docs/results/2026-11-04-v2-budget-notice-ranges.md)): **36–42% lower Claude cost** on tasks that require understanding a large module or a flow across several large files; ~5% on questions about one file that a few targeted reads answer; nothing on lookup questions (the agent just greps, the hook never fires). Sessions take 1.5–1.9× longer.
 
 ## How it works
 
 | Layer | What it does |
 |---|---|
 | **Hook** (`detour hook claude`) | Claude Code `PreToolUse` on `Read` and `Bash`. Denies whole reads of files over `DETOUR_MIN_LINES` (default 350), including `cat`/`less`/`head`/`tail` with large counts. Targeted reads (`offset` + `limit` ≤ threshold) pass until they add up to `DETOUR_FILE_BUDGET` lines of that file in the session (default 350); after that they are denied too. Fails open on any error. |
-| **Delegate** (`detour read`) | Wraps files in `<file>` tags with numbered lines, sends them with the question to the mode's model, prints the answer. Refuses files that look like secrets (`.env`, `*.pem`, keys...). |
+| **Delegate** (`detour read`) | Wraps files (or `FILE:START-END` ranges) in `<file>` tags with numbered lines, sends them with the question to the mode's model, prints the answer. Refuses files that look like secrets (`.env`, `*.pem`, keys...). |
 | **Skill** (`detour-read`) | Tells the agent when to delegate and when not to (editing, subtle debugging, small files). |
 | **Ledger** | One JSON line per blocked read, targeted read and delegation, with tokens, cost and latency. `detour stats` summarises it. |
 | **Benchmark** (`detour bench`) | Runs real Claude Code sessions on fixed scenarios with and without the plugin and reports net cost, quality and latency. |
@@ -75,7 +77,7 @@ On a subscription, `total_cost_usd` is the list-price equivalent: you don't pay 
 | `execute-flow` | Understanding a ~200-line flow in `command.go`; no single grep answers it |
 | `completions-design` | Design overview of `completions.go` before changing it |
 
-Add your own: `name`, `repo`, `ref`, `prompt`, and `expect` (case-insensitive regexes the answer must match). Scenarios that make the agent read large files whole are where delegation can pay off. If the agent can answer with `grep`, it usually will, and detour won't help.
+Add your own: `name`, `repo` (git URL) or `path` (local repository, checked out as a detached worktree so your working copy is untouched), `ref`, `prompt`, and `expect` (case-insensitive regexes the answer must match). `setting_sources: ""` skips the project's own Claude settings (plugins, hooks) in both variants. Keep scenarios about private code out of this repo: `bench/local/` is git-ignored, and `-scenarios bench/local/<dir>` runs them. Scenarios that make the agent read large files whole are where delegation can pay off. If the agent can answer with `grep`, it usually will, and detour won't help.
 
 ## Configuration
 
@@ -105,7 +107,9 @@ Add your own: `name`, `repo`, `ref`, `prompt`, and `expect` (case-insensitive re
 
 ## Roadmap
 
-1. ~~Hook + delegate + ledger + A/B benchmark for Claude Code~~ (this release)
+1. ~~Hook + delegate + ledger + A/B benchmark for Claude Code~~
+1. ~~Per-file session budget, Haiku delegate, line ranges, local-repo scenarios~~
+1. Editing tasks in the benchmark, scored by the project's own tests
 2. Better shell coverage (`sed -n`, `awk`, `rg` without limits, pipelines) and per-session read budgets
 3. `code-writer` mode (generate tests/stubs from a reference file, write to disk)
 4. `detour serve`: mode server in Docker, shared by a team, with a web UI for modes and a net-cost dashboard
