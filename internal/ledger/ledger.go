@@ -39,6 +39,7 @@ type Event struct {
 	CompletionTokens int     `json:"completion_tokens,omitempty"`
 	AnswerBytes      int     `json:"answer_bytes,omitempty"` // what flows back into the expensive context
 	CostUSD          float64 `json:"cost_usd,omitempty"`
+	ClaudePlan       bool    `json:"claude_plan,omitempty"` // cost counts against the user's Claude usage
 	LatencyMS        int64   `json:"latency_ms,omitempty"`
 	Error            string  `json:"error,omitempty"`
 }
@@ -108,6 +109,7 @@ type Summary struct {
 	PromptTokens, CachedTokens, CompletionTokens  int
 	AnswerBytes                                   int
 	CostUSD                                       float64
+	PlanCostUSD                                   float64 // part of CostUSD on the user's Claude plan
 	LatencyMS                                     int64
 }
 
@@ -136,6 +138,9 @@ func Summarize(events []Event, keep func(Event) bool) Summary {
 			s.CompletionTokens += e.CompletionTokens
 			s.AnswerBytes += e.AnswerBytes
 			s.CostUSD += e.CostUSD
+			if e.ClaudePlan {
+				s.PlanCostUSD += e.CostUSD
+			}
 			s.LatencyMS += e.LatencyMS
 		}
 	}

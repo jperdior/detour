@@ -19,11 +19,23 @@ var defaultYAML []byte
 // Default returns the embedded default config as YAML.
 func Default() []byte { return defaultYAML }
 
-// Provider is an OpenAI-compatible endpoint.
+// Provider types.
+const (
+	TypeOpenAI    = "openai"     // OpenAI-compatible HTTP endpoint (default)
+	TypeClaudeCLI = "claude-cli" // `claude -p`: uses the Claude Code login, subscription included
+)
+
+// Provider is where a model runs.
 type Provider struct {
-	BaseURL   string `yaml:"base_url"`
-	APIKeyEnv string `yaml:"api_key_env"` // empty for keyless local servers
+	Type      string `yaml:"type"`        // openai (default) or claude-cli
+	BaseURL   string `yaml:"base_url"`    // openai
+	APIKeyEnv string `yaml:"api_key_env"` // openai; empty for keyless local servers
+	Bin       string `yaml:"bin"`         // claude-cli; defaults to "claude"
 }
+
+// UsesClaudePlan reports whether calls consume the user's Claude usage
+// (subscription quota or API spend), like the main agent does.
+func (p Provider) UsesClaudePlan() bool { return p.Type == TypeClaudeCLI }
 
 // Price is USD per million tokens.
 type Price struct {
@@ -105,6 +117,13 @@ func Parse(data []byte) (*Config, error) {
 	var c Config
 	if err := yaml.Unmarshal(data, &c); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
+	}
+	for name, p := range c.Providers {
+		switch p.Type {
+		case "", TypeOpenAI, TypeClaudeCLI:
+		default:
+			return nil, fmt.Errorf("config: provider %q has unknown type %q", name, p.Type)
+		}
 	}
 	for name, m := range c.Modes {
 		mod, ok := c.Models[m.Model]

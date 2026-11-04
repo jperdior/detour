@@ -106,15 +106,20 @@ type Result struct {
 	Answer  string   `json:"answer"`
 
 	// From detour's ledger for this run.
-	Blocks          int     `json:"blocks"`
-	Partials        int     `json:"partials"`
-	Delegations     int     `json:"delegations"`
-	DelegateErrors  int     `json:"delegate_errors"`
-	DelegateCostUSD float64 `json:"delegate_cost_usd"`
-	DelegateTokens  int     `json:"delegate_tokens"`
+	Blocks              int     `json:"blocks"`
+	Partials            int     `json:"partials"`
+	Delegations         int     `json:"delegations"`
+	DelegateErrors      int     `json:"delegate_errors"`
+	DelegateCostUSD     float64 `json:"delegate_cost_usd"`
+	DelegatePlanCostUSD float64 `json:"delegate_plan_cost_usd"` // part of delegate cost on the Claude plan (haiku via claude-cli)
+	DelegateTokens      int     `json:"delegate_tokens"`
 
 	NetCostUSD float64 `json:"net_cost_usd"`
 }
+
+// PlanCostUSD is what the session costs against the user's Claude usage: the
+// main agent plus any delegation that ran through Claude Code.
+func (r Result) PlanCostUSD() float64 { return r.ClaudeCostUSD + r.DelegatePlanCostUSD }
 
 // ContextTokens is everything the expensive model read, cached or not.
 func (r Result) ContextTokens() int {
@@ -271,6 +276,7 @@ func runOne(ctx context.Context, o Options, s Scenario, variant string, rep int,
 	r.Blocks, r.Partials = sum.Blocks, sum.Partials
 	r.Delegations, r.DelegateErrors = sum.Delegations, sum.DelegateErrors
 	r.DelegateCostUSD = sum.CostUSD
+	r.DelegatePlanCostUSD = sum.PlanCostUSD
 	r.DelegateTokens = sum.PromptTokens + sum.CompletionTokens
 	r.NetCostUSD = r.ClaudeCostUSD + r.DelegateCostUSD
 	return r

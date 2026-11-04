@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -62,6 +64,58 @@ func TestAskRejectsOversizedInput(t *testing.T) {
 	r := &config.Resolved{Mode: config.Mode{MaxInputTokens: 10}}
 	_, err := Ask(context.Background(), r, "q", []File{{Path: "f", Content: strings.Repeat("x", 1000)}})
 	if err == nil || !strings.Contains(err.Error(), "split") {
+		t.Fatalf("got %v", err)
+	}
+}
+
+// fakeClaude writes a script that records its stdin and args and prints a
+// canned `claude -p --output-format json` result.
+func fakeClaude(t *testing.T, result string) (bin, dir string) {
+	t.Helper()
+	dir = t.TempDir()
+	bin = filepath.Join(dir, "claude")
+	script := "#!/bin/sh\ncat > \"" + dir + "/stdin\"\necho \"$@\" > \"" + dir + "/args\"\ncat <<'EOF'\n" + result + "\nEOF\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return bin, dir
+}
+
+func TestAskClaudeCLI(t *testing.T) {
+	bin, dir := fakeClaude(t, `{"is_error":false,"result":" - L2 Hello ","total_cost_usd":0.0002,
+"usage":{"input_tokens":2,"cache_creation_input_tokens":630,"cache_read_input_tokens":100,"output_tokens":31}}`)
+	r := &config.Resolved{
+		Mode:     config.Mode{Instructions: "be brief"},
+		Model:    config.Model{ID: "haiku"},
+		Provider: config.Provider{Type: config.TypeClaudeCLI, Bin: bin},
+	}
+	res, err := Ask(context.Background(), r, "which?", []File{{Path: "a.go", Content: "package a\n"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Answer != "- L2 Hello" || res.CostUSD != 0.0002 || !res.ClaudePlan {
+		t.Fatalf("got %+v", res)
+	}
+	if res.Usage.PromptTokens != 732 || res.Usage.CachedTokens != 100 || res.Usage.CompletionTokens != 31 {
+		t.Fatalf("usage %+v", res.Usage)
+	}
+	stdin, _ := os.ReadFile(filepath.Join(dir, "stdin"))
+	args, _ := os.ReadFile(filepath.Join(dir, "args"))
+	if !strings.Contains(string(stdin), "L1|package a") {
+		t.Fatalf("prompt not on stdin: %q", stdin)
+	}
+	for _, want := range []string{"--model haiku", "--system-prompt be brief", "--setting-sources"} {
+		if !strings.Contains(string(args), want) {
+			t.Fatalf("args %q lack %q", args, want)
+		}
+	}
+}
+
+func TestAskClaudeCLIError(t *testing.T) {
+	bin, _ := fakeClaude(t, `{"is_error":true,"subtype":"error_during_execution","result":"rate limited"}`)
+	r := &config.Resolved{Model: config.Model{ID: "haiku"}, Provider: config.Provider{Type: config.TypeClaudeCLI, Bin: bin}}
+	_, err := Ask(context.Background(), r, "q", []File{{Path: "f", Content: "x"}})
+	if err == nil || !strings.Contains(err.Error(), "rate limited") {
 		t.Fatalf("got %v", err)
 	}
 }

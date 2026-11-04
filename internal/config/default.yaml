@@ -11,6 +11,8 @@ providers:
   ollama:
     base_url: http://localhost:11434/v1
     api_key_env: ""            # local, no key; your code never leaves the machine
+  claude-code:
+    type: claude-cli           # runs `claude -p`: no API key, uses your Claude login
 
 # Prices are USD per million tokens. They feed the net-cost numbers, so keep
 # them current. DeepSeek, checked 2026-11-04 at
@@ -23,6 +25,12 @@ models:
   deepseek-v4-pro:
     provider: deepseek
     price: { input: 1.32, cached_input: 0.044, output: 3.96 }
+  # Haiku through your Claude Code login (subscription works). Cost comes from
+  # Claude Code's own report, so no price here. It consumes the same plan
+  # usage as the main agent: the benchmark counts it under "Claude $".
+  haiku:
+    provider: claude-code
+    id: haiku
   qwen2.5-coder:
     provider: ollama
     id: qwen2.5-coder:14b

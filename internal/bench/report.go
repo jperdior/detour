@@ -65,7 +65,7 @@ func Aggregate(rs []Result) map[string]map[string]*Stats {
 		if r.Passed {
 			st.Passed++
 		}
-		st.ClaudeCost = append(st.ClaudeCost, r.ClaudeCostUSD)
+		st.ClaudeCost = append(st.ClaudeCost, r.PlanCostUSD())
 		st.DelegateCost = append(st.DelegateCost, r.DelegateCostUSD)
 		st.NetCost = append(st.NetCost, r.NetCostUSD)
 		st.InputTokens = append(st.InputTokens, float64(r.InputTokens))
@@ -93,7 +93,7 @@ func WriteMarkdown(w io.Writer, rs []Result) {
 
 	fmt.Fprintf(w, "# detour benchmark\n\n")
 	fmt.Fprintf(w, "%d sessions. Mean ± sd over successful sessions.\n\n", len(rs))
-	fmt.Fprintf(w, "- **Claude $**: `total_cost_usd` from Claude Code at list price. On a subscription you don't pay it, but it is the best public proxy for plan usage, which the delegate model doesn't consume.\n")
+	fmt.Fprintf(w, "- **Claude $**: `total_cost_usd` from Claude Code at list price, for the agent plus any delegation that ran through Claude Code (e.g. Haiku via claude-cli). On a subscription you don't pay it, but it is the best public proxy for plan usage. Third-party delegates (DeepSeek...) don't count here.\n")
 	fmt.Fprintf(w, "- **Net $**: Claude $ + delegate model cost. What you pay with an API key.\n")
 	fmt.Fprintf(w, "- Token columns are Claude tokens by type, which are priced differently (cache reads are much cheaper than input, output much dearer), so they are not summed. Delegate tokens are the cheap model's, in + out.\n\n")
 

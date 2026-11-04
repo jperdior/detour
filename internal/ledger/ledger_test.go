@@ -18,10 +18,11 @@ func TestAppendReadSummarize(t *testing.T) {
 	must(Append(p, Event{Kind: KindBlock, EstTokens: 1000}))
 	must(Append(p, Event{Kind: KindDelegate, PromptTokens: 900, CompletionTokens: 100, CostUSD: 0.001}))
 	must(Append(p, Event{Kind: KindDelegate, Error: "boom", RunID: "run-2"}))
+	must(Append(p, Event{Kind: KindDelegate, CostUSD: 0.002, ClaudePlan: true, RunID: "run-3"}))
 
 	events, err := Read(p)
 	must(err)
-	if len(events) != 3 {
+	if len(events) != 4 {
 		t.Fatalf("got %d events", len(events))
 	}
 	if events[0].RunID != "run-1" || events[0].Time.IsZero() {
@@ -29,7 +30,10 @@ func TestAppendReadSummarize(t *testing.T) {
 	}
 
 	all := Summarize(events, nil)
-	if all.Blocks != 1 || all.Delegations != 1 || all.DelegateErrors != 1 || all.BlockedEstTokens != 1000 {
+	if all.PlanCostUSD != 0.002 {
+		t.Fatalf("plan cost: %+v", all)
+	}
+	if all.Blocks != 1 || all.Delegations != 2 || all.DelegateErrors != 1 || all.BlockedEstTokens != 1000 {
 		t.Fatalf("summary: %+v", all)
 	}
 	run1 := Summarize(events, func(e Event) bool { return e.RunID == "run-1" })

@@ -36,8 +36,9 @@ Usage:
 
 Environment:
   DEEPSEEK_API_KEY     key for the default bulk-reader model
+  DETOUR_MODEL=haiku   delegate to Haiku through your Claude Code login instead
   DETOUR_CONFIG        config file (default ~/.config/detour/config.yaml)
-  DETOUR_MODEL         override the mode's model, e.g. qwen2.5-coder
+  DETOUR_MODEL         override the mode's model: haiku, deepseek-v4-pro, qwen2.5-coder...
   DETOUR_MIN_LINES     line threshold for the hook (default 350)
   DETOUR_LEDGER        ledger file (default ~/.local/state/detour/ledger.jsonl)
 `
@@ -103,6 +104,7 @@ func cmdRead(args []string) error {
 	}
 	ev.PromptTokens, ev.CachedTokens, ev.CompletionTokens = res.Usage.PromptTokens, res.Usage.CachedTokens, res.Usage.CompletionTokens
 	ev.CostUSD, ev.LatencyMS, ev.AnswerBytes, ev.Bytes = res.CostUSD, res.Latency.Milliseconds(), len(res.Answer), int64(res.InputLen)
+	ev.ClaudePlan = res.ClaudePlan
 	_ = ledger.Append(ledger.Path(), ev)
 
 	fmt.Println(res.Answer)
@@ -129,7 +131,7 @@ func cmdStats() error {
 	fmt.Printf("targeted reads:    %d\n", s.Partials)
 	fmt.Printf("delegations:       %d ok, %d failed\n", s.Delegations, s.DelegateErrors)
 	fmt.Printf("delegate tokens:   %d in (%d cached), %d out\n", s.PromptTokens, s.CachedTokens, s.CompletionTokens)
-	fmt.Printf("delegate cost:     $%.4f\n", s.CostUSD)
+	fmt.Printf("delegate cost:     $%.4f ($%.4f of it on your Claude plan)\n", s.CostUSD, s.PlanCostUSD)
 	fmt.Printf("answers returned:  ~%d tokens back into the agent\n", s.AnswerBytes/4)
 	fmt.Println("\nThese are estimates. For real net savings run `detour bench run`.")
 	return nil

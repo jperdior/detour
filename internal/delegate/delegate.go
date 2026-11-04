@@ -3,10 +3,13 @@
 package delegate
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -23,6 +26,8 @@ type Result struct {
 	Latency   time.Duration
 	InputLen  int // bytes of file content sent
 	FileCount int
+	// ClaudePlan: the call consumed the user's Claude usage (claude-cli).
+	ClaudePlan bool
 }
 
 // secretPatterns are file names never sent to a third-party model.
@@ -94,6 +99,10 @@ func Ask(ctx context.Context, r *config.Resolved, question string, files []File)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	if r.Provider.Type == config.TypeClaudeCLI {
+		return askClaudeCLI(ctx, r, prompt, files)
+	}
+
 	start := time.Now()
 	resp, err := llm.Chat(ctx, http.DefaultClient, r.Provider.BaseURL, r.APIKey, llm.Request{
 		Model:       r.Model.ID,
@@ -107,16 +116,80 @@ func Ask(ctx context.Context, r *config.Resolved, question string, files []File)
 	if err != nil {
 		return nil, err
 	}
-	total := 0
-	for _, f := range files {
-		total += len(f.Content)
-	}
 	return &Result{
 		Answer:    strings.TrimSpace(resp.Content),
 		Usage:     resp.Usage,
 		CostUSD:   r.Model.Price.Cost(resp.Usage.PromptTokens, resp.Usage.CachedTokens, resp.Usage.CompletionTokens),
 		Latency:   time.Since(start),
-		InputLen:  total,
+		InputLen:  contentLen(files),
 		FileCount: len(files),
+	}, nil
+}
+
+func contentLen(files []File) int {
+	n := 0
+	for _, f := range files {
+		n += len(f.Content)
+	}
+	return n
+}
+
+// askClaudeCLI runs the mode through `claude -p` with no tools, no user
+// settings (so no plugins or hooks, and no recursion into detour) and the
+// mode's instructions as the whole system prompt. Fixed overhead is a few
+// hundred tokens. The prompt goes on stdin to avoid argument size limits.
+func askClaudeCLI(ctx context.Context, r *config.Resolved, prompt string, files []File) (*Result, error) {
+	bin := r.Provider.Bin
+	if bin == "" {
+		bin = "claude"
+	}
+	args := []string{
+		"-p",
+		"--model", r.Model.ID,
+		"--output-format", "json",
+		"--system-prompt", r.Mode.Instructions,
+		"--tools", "",
+		"--setting-sources", "",
+		"--strict-mcp-config",
+		"--no-session-persistence",
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Stdin = strings.NewReader(prompt)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	start := time.Now()
+	runErr := cmd.Run()
+
+	var out struct {
+		IsError      bool    `json:"is_error"`
+		Subtype      string  `json:"subtype"`
+		Result       string  `json:"result"`
+		TotalCostUSD float64 `json:"total_cost_usd"`
+		Usage        struct {
+			InputTokens              int `json:"input_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(bytes.TrimSpace(stdout.Bytes()), &out); err != nil {
+		return nil, fmt.Errorf("%s -p: %v (exit: %v) %s", bin, err, runErr, strings.TrimSpace(stderr.String()))
+	}
+	if out.IsError {
+		return nil, fmt.Errorf("%s -p: %s: %s", bin, out.Subtype, out.Result)
+	}
+	u := out.Usage
+	return &Result{
+		Answer: strings.TrimSpace(out.Result),
+		Usage: llm.Usage{
+			PromptTokens:     u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens,
+			CachedTokens:     u.CacheReadInputTokens,
+			CompletionTokens: u.OutputTokens,
+		},
+		CostUSD:    out.TotalCostUSD,
+		Latency:    time.Since(start),
+		InputLen:   contentLen(files),
+		FileCount:  len(files),
+		ClaudePlan: true,
 	}, nil
 }

@@ -69,6 +69,10 @@ func TestReportDelta(t *testing.T) {
 		{Scenario: "a", Variant: Detour, ClaudeCostUSD: 0.04, NetCostUSD: 0.055, Passed: true, CacheReadTokens: 500},
 		{Scenario: "a", Variant: Detour, Error: "boom"},
 	}
+	// A Haiku delegation counts against the plan.
+	if (Result{ClaudeCostUSD: 0.04, DelegatePlanCostUSD: 0.01}).PlanCostUSD() != 0.05 {
+		t.Fatal("plan cost should include Claude-plan delegations")
+	}
 	var b bytes.Buffer
 	WriteMarkdown(&b, rs)
 	out := b.String()

@@ -2,7 +2,7 @@
 
 Keep coding agents from reading large files with an expensive model.
 
-A hook blocks whole-file reads above a line threshold and tells the agent to ask a question instead. `detour read` sends the question and the files to a cheap model (DeepSeek by default, or anything OpenAI-compatible, including local Ollama) and returns a compact answer with line numbers. The expensive model only sees the answer.
+A hook blocks whole-file reads above a line threshold and tells the agent to ask a question instead. `detour read` sends the question and the files to a cheap model and returns a compact answer with line numbers: DeepSeek by default, Haiku through your own Claude Code login (no API key, subscription works), or anything OpenAI-compatible, including local Ollama. The expensive model only sees the answer.
 
 The idea comes from Spotify's [Portal + shunt](https://engineering.atspotify.com/2026/9/portal-by-spotify-cut-my-claude-code-token-usage-by-90) (about 90% fewer tokens on bulk reads in their tests). detour is a self-hosted, provider-agnostic take on it. Other public ports that measured carefully found small or no net savings, so **this project measures first**: the A/B benchmark is the core of v0.
 
@@ -24,7 +24,7 @@ Requires Go 1.23+ and Claude Code.
 
 ```bash
 go install github.com/jperdior/detour/cmd/detour@latest   # puts detour on your PATH
-export DEEPSEEK_API_KEY=sk-...
+export DEEPSEEK_API_KEY=sk-...   # or: export DETOUR_MODEL=haiku  (uses your Claude Code login)
 
 claude plugin marketplace add jperdior/detour
 claude plugin install detour@detour
@@ -36,7 +36,7 @@ Try it on any file:
 detour read -q "Which functions handle retries, and what backoff do they use?" internal/client.go
 ```
 
-Works with a Claude subscription or an API key: the hook and plugin don't care how Claude Code is authenticated. The delegate model is billed separately by its own provider.
+Works with a Claude subscription or an API key: the hook and plugin don't care how Claude Code is authenticated. A third-party delegate (DeepSeek, OpenRouter) is billed by its own provider. The `haiku` delegate runs `claude -p` with no tools, no user settings and the mode's instructions as the whole system prompt (a few hundred tokens of overhead), so it draws on the same Claude plan as the agent.
 
 ## Benchmark
 
@@ -44,6 +44,7 @@ Works with a Claude subscription or an API key: the hook and plugin don't care h
 git clone https://github.com/jperdior/detour && cd detour
 export DEEPSEEK_API_KEY=sk-...
 make bench REPS=3 MODEL=sonnet           # or: ./bin/detour bench run -reps 3 -only run-hooks
+DETOUR_MODEL=haiku make bench REPS=3     # same, delegating to Haiku instead of DeepSeek
 ```
 
 Each session runs `claude -p` in a pinned checkout of the scenario's repo, with the user's own settings, plugins and MCP servers disabled (`--setting-sources project,local --strict-mcp-config`). The two variants differ only in `--plugin-dir plugin/`. Reps are interleaved so drift affects both variants alike.
@@ -52,7 +53,7 @@ Per session it records, from Claude Code's own JSON result, `total_cost_usd`, in
 
 The report gives two headline numbers per scenario:
 
-- **Claude $**: Claude Code's `total_cost_usd` at list price. On a subscription you don't pay it, but it is the best public proxy for plan usage, which the delegate model doesn't consume.
+- **Claude $**: Claude Code's `total_cost_usd` at list price, for the agent plus any Haiku delegations (they use the same plan). On a subscription you don't pay it, but it is the best public proxy for plan usage. Third-party delegates don't count here.
 - **Net $** = Claude $ + delegate model cost: what you pay with an API key.
 
 Claude tokens are shown by type (input, cache write, cache read, output) and never summed, because each type has a different price. Raw token totals mislead: detour can raise cache reads (cheap) while cutting cache writes (dear) and still come out cheaper. Delegate tokens are listed separately, since tokens from different models can only be compared through price.
@@ -78,14 +79,14 @@ Add your own: `name`, `repo`, `ref`, `prompt`, and `expect` (case-insensitive re
 
 `detour config > ~/.config/detour/config.yaml` and edit. It has three sections:
 
-- `providers`: OpenAI-compatible endpoints (DeepSeek, OpenRouter, Ollama preset).
+- `providers`: OpenAI-compatible endpoints (DeepSeek, OpenRouter, Ollama preset), or `type: claude-cli` to run through Claude Code.
 - `models`: provider, API model id, and price per million tokens (keep these current, they drive the cost numbers).
 - `modes`: declarative workers: model, temperature, limits and instructions. `bulk-reader` is the default.
 
 | Env var | Default | |
 |---|---|---|
 | `DEEPSEEK_API_KEY` | | Key for the default model |
-| `DETOUR_MODEL` | mode's model | e.g. `qwen2.5-coder` to stay local |
+| `DETOUR_MODEL` | mode's model | `haiku`, `deepseek-v4-pro`, `qwen2.5-coder` (local)... |
 | `DETOUR_MIN_LINES` | `350` | Hook threshold |
 | `DETOUR_CONFIG` | `~/.config/detour/config.yaml` | |
 | `DETOUR_LEDGER` | `~/.local/state/detour/ledger.jsonl` | |
