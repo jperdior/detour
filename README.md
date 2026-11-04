@@ -8,7 +8,13 @@ The idea comes from Spotify's [Portal + shunt](https://engineering.atspotify.com
 
 > Status: experimental. Claude Code only, bulk-read only. No server or UI yet (see the roadmap).
 >
-> **Results so far** (Opus agent, Haiku delegate, 100 sessions, all answers correct; [v1](docs/results/2026-11-04-opus-haiku.md), [v2](docs/results/2026-11-04-v2-budget-notice-ranges.md)): **36–42% lower Claude cost** on tasks that require understanding a large module or a flow across several large files; ~5% on questions about one file that a few targeted reads answer; nothing on lookup questions (the agent just greps, the hook never fires). Sessions take 1.5–1.9× longer.
+> **Results so far** (Opus agent, Haiku delegate, 100 sessions, all answers correct; [v1](docs/results/2026-11-04-opus-haiku.md), [v2](docs/results/2026-11-04-v2-budget-notice-ranges.md)): **36–42% lower Claude cost** on tasks that require understanding a large module or a flow across several large files; ~5% on questions about one file that a few targeted reads answer; nothing on lookup questions (the agent just greps, the hook never fires). Sessions take 1.5–1.9× longer. A block-only hook, without delegation, saves nothing on those comprehension tasks ([v4](docs/results/2026-11-04-v4-block-only.md)).
+
+## Join the field trial
+
+The benchmarks use fixed tasks. To learn whether detour saves anything in everyday work, a randomized trial runs in real Claude Code sessions. Each session is assigned detour on or off at random and measured from its own transcript. After 100 sessions you can send anonymized numbers, after reviewing them. Setup takes two commands; see [docs/TRIAL.md](docs/TRIAL.md), or paste this into Claude Code:
+
+> Set me up for the detour field trial following https://raw.githubusercontent.com/jperdior/detour/main/docs/TRIAL.md (section "Instructions for the agent").
 
 ## How it works
 

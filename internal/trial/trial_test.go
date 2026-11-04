@@ -134,7 +134,7 @@ func TestSessionEndMeasuresAndNotifiesOnce(t *testing.T) {
 	if s := Lookup(state, "a"); s.Usage == nil || s.Usage.CostUSD != 4 {
 		t.Fatalf("1M input tokens of Opus 5.5 cost $4: %+v", s.Usage)
 	}
-	if len(notes) != 1 || !strings.Contains(notes[0], "2 sesiones") {
+	if len(notes) != 1 || !strings.Contains(notes[0], "2 sessions measured") {
 		t.Fatalf("notify exactly once at the target: %v", notes)
 	}
 	rows, _ := Rows(state, nil)

@@ -84,7 +84,7 @@ func notifyAtTarget(cfg Config, dir string, notify func(title, msg string)) {
 	}
 	if _, err := os.Stat(marker); os.IsNotExist(err) {
 		if notify != nil {
-			notify("detour", fmt.Sprintf("%d sesiones medidas: ya se pueden comparar los resultados (detour trial report)", n))
+			notify("detour", fmt.Sprintf("%d sessions measured. See your results with: detour trial report. Share them with: detour trial share", n))
 		}
 		_ = os.WriteFile(marker, []byte(time.Now().UTC().Format(time.RFC3339)+"\n"), 0o644)
 	}
@@ -191,8 +191,13 @@ func Measured(dir string) int {
 	return n
 }
 
-// NotifyMac shows a macOS notification; elsewhere it does nothing.
+// NotifyMac shows a desktop notification: macOS, or notify-send on Linux.
 func NotifyMac(title, msg string) {
-	script := fmt.Sprintf("display notification %q with title %q", msg, title)
-	_ = exec.Command("osascript", "-e", script).Run()
+	if _, err := exec.LookPath("osascript"); err == nil {
+		_ = exec.Command("osascript", "-e", fmt.Sprintf("display notification %q with title %q", msg, title)).Run()
+		return
+	}
+	if _, err := exec.LookPath("notify-send"); err == nil {
+		_ = exec.Command("notify-send", title, msg).Run()
+	}
 }

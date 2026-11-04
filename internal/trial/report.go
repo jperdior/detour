@@ -14,15 +14,22 @@ import (
 
 // Row is one measured session.
 type Row struct {
-	ID, Arm, Project, Origin, Profile, Activity string
-	CostUSD                                     float64 // agent transcript + Claude-plan delegations
-	DelegateUSD                                 float64
-	Tokens                                      transcript.Usage // summed over models
-	Calls, Prompts                              int
-	Minutes                                     float64
-	Blocks                                      int // block, or shadow-block in the off arm
-	Delegations                                 int
-	Unpriced                                    []string
+	ID          string           `json:"-"`
+	Contributor string           `json:"-"` // set when aggregating shared reports
+	Arm         string           `json:"arm"`
+	Project     string           `json:"project"`
+	Origin      string           `json:"origin"`
+	Profile     string           `json:"profile"`
+	Activity    string           `json:"activity"`
+	CostUSD     float64          `json:"cost_usd"` // agent transcript + Claude-plan delegations
+	DelegateUSD float64          `json:"delegate_usd"`
+	Tokens      transcript.Usage `json:"tokens"` // summed over models
+	Calls       int              `json:"calls"`
+	Prompts     int              `json:"prompts"`
+	Minutes     float64          `json:"minutes"`
+	Blocks      int              `json:"blocks"` // block, or shadow-block in the off arm
+	Delegations int              `json:"delegations"`
+	Unpriced    []string         `json:"unpriced,omitempty"`
 }
 
 // Rows measures every ended trial session. Transcripts are read again, so a
@@ -88,8 +95,11 @@ func Rows(dir string, events []ledger.Event) ([]Row, error) {
 func WriteReport(w io.Writer, cfg Config, rows []Row) {
 	fmt.Fprintf(w, "# detour field trial\n\n")
 	fmt.Fprintf(w, "%d measured sessions (target %d). Cost is list price for everything the session drew from the Claude plan: the agent, its subagents and Haiku delegations.\n\n", len(rows), cfg.Target)
-	arms := cfg.Arms
+	WriteSummary(w, cfg.Arms, rows)
+}
 
+// WriteSummary prints the comparison tables, without the title.
+func WriteSummary(w io.Writer, arms []string, rows []Row) {
 	fmt.Fprintf(w, "## All sessions\n\n")
 	armTable(w, arms, rows)
 	diffLine(w, arms, rows)
@@ -107,7 +117,11 @@ func WriteReport(w io.Writer, cfg Config, rows []Row) {
 		{"origin", func(r Row) string { return r.Origin }},
 		{"project", func(r Row) string { return r.Project }},
 		{"profile (Claude account)", func(r Row) string { return r.Profile }},
+		{"contributor", func(r Row) string { return r.Contributor }},
 	} {
+		if len(keys(rows, dim.key)) < 2 && dim.name == "contributor" {
+			continue
+		}
 		fmt.Fprintf(w, "\n## By %s\n\n", dim.name)
 		fmt.Fprintf(w, "| %s |", strings.Split(dim.name, " ")[0])
 		for _, a := range arms {
