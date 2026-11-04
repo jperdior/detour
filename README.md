@@ -50,9 +50,12 @@ Each session runs `claude -p` in a pinned checkout of the scenario's repo, with 
 
 Per session it records, from Claude Code's own JSON result, `total_cost_usd`, input/cache/output tokens, turns and duration. From the ledger it adds blocks, delegations and delegate cost. It also checks the answer against the scenario's `expect` regexes, so cheaper but wrong doesn't count as a win.
 
-```
-net cost = Claude cost + delegate model cost
-```
+The report gives two headline numbers per scenario:
+
+- **Claude $**: Claude Code's `total_cost_usd` at list price. On a subscription you don't pay it, but it is the best public proxy for plan usage, which the delegate model doesn't consume.
+- **Net $** = Claude $ + delegate model cost: what you pay with an API key.
+
+Claude tokens are shown by type (input, cache write, cache read, output) and never summed, because each type has a different price. Raw token totals mislead: detour can raise cache reads (cheap) while cutting cache writes (dear) and still come out cheaper. Delegate tokens are listed separately, since tokens from different models can only be compared through price.
 
 Results go to `bench/results/<timestamp>/` (`results.jsonl`, `ledger.jsonl`, `raw/`, `report.md`).
 

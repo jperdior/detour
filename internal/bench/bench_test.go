@@ -64,16 +64,24 @@ func TestLoadScenariosFromRepo(t *testing.T) {
 
 func TestReportDelta(t *testing.T) {
 	rs := []Result{
-		{Scenario: "a", Variant: Baseline, NetCostUSD: 0.10, Passed: true},
-		{Scenario: "a", Variant: Baseline, NetCostUSD: 0.12, Passed: true},
-		{Scenario: "a", Variant: Detour, NetCostUSD: 0.05, Passed: true},
+		{Scenario: "a", Variant: Baseline, ClaudeCostUSD: 0.10, NetCostUSD: 0.10, Passed: true, CacheReadTokens: 1000},
+		{Scenario: "a", Variant: Baseline, ClaudeCostUSD: 0.12, NetCostUSD: 0.12, Passed: true, CacheReadTokens: 3000},
+		{Scenario: "a", Variant: Detour, ClaudeCostUSD: 0.04, NetCostUSD: 0.055, Passed: true, CacheReadTokens: 500},
 		{Scenario: "a", Variant: Detour, Error: "boom"},
 	}
 	var b bytes.Buffer
 	WriteMarkdown(&b, rs)
 	out := b.String()
-	if !strings.Contains(out, "**-54.5%**") || !strings.Contains(out, "| detour | 1/2 |") {
-		t.Fatalf("report:\n%s", out)
+	for _, want := range []string{
+		"Claude $ **-63.6%**", // 0.11 → 0.04
+		"net $ **-50.0%**",    // 0.11 → 0.055
+		"| detour | 1/2 |",
+		"| 2000 |", // baseline mean cache read, its own column
+		"| Claude $ | 0.1100 | 0.0400 | **-63.6%** |",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("report lacks %q:\n%s", want, out)
+		}
 	}
 }
 
