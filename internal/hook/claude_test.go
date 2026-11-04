@@ -137,3 +137,28 @@ func TestClaudeBlockOnly(t *testing.T) {
 		}
 	}
 }
+
+func TestClaudeLeavesProseAndOutsideFilesAlone(t *testing.T) {
+	repo := t.TempDir()
+	outside := t.TempDir()
+	big := []byte(strings.Repeat("x\n", 2000))
+	os.WriteFile(filepath.Join(repo, "spec.md"), big, 0o644)
+	os.WriteFile(filepath.Join(repo, "big.go"), big, 0o644)
+	os.WriteFile(filepath.Join(outside, "tool-result.txt"), big, 0o644)
+	os.WriteFile(filepath.Join(outside, "data.json"), big, 0o644)
+	lp := filepath.Join(t.TempDir(), "l.jsonl")
+	for _, p := range []string{"spec.md", filepath.Join(outside, "tool-result.txt"), filepath.Join(outside, "data.json")} {
+		payload := fmt.Sprintf(`{"session_id":"s","cwd":%q,"tool_name":"Read","tool_input":{"file_path":%q}}`, repo, p)
+		if out := run(t, payload, lp); out != "" {
+			t.Fatalf("%s must not be blocked: %q", p, out)
+		}
+	}
+	payload := fmt.Sprintf(`{"session_id":"s","cwd":%q,"tool_name":"Bash","tool_input":{"command":"cat %s"}}`, repo, filepath.Join(outside, "data.json"))
+	if out := run(t, payload, lp); out != "" {
+		t.Fatalf("cat outside the repo must pass: %q", out)
+	}
+	payload = fmt.Sprintf(`{"session_id":"s","cwd":%q,"tool_name":"Read","tool_input":{"file_path":"big.go"}}`, repo)
+	if out := run(t, payload, lp); !strings.Contains(out, `"deny"`) {
+		t.Fatalf("code in the repo is still governed: %q", out)
+	}
+}

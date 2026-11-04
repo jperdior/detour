@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jperdior/detour/internal/ledger"
 	"github.com/jperdior/detour/internal/policy"
@@ -144,5 +145,23 @@ func TestSessionEndMeasuresAndNotifiesOnce(t *testing.T) {
 	WriteReport(&b, cfg, rows)
 	if !strings.Contains(b.String(), "| off | 3 | 4.000 |") {
 		t.Fatalf("report:\n%s", b.String())
+	}
+}
+
+func TestLateJoinerIsExcluded(t *testing.T) {
+	repo := gitRepo(t)
+	state := t.TempDir()
+	tr := filepath.Join(t.TempDir(), "t.jsonl")
+	os.WriteFile(tr, []byte(`{"type":"user","timestamp":"2026-01-01T10:00:00Z","message":{"content":"hi"}}`+"\n"), 0o644)
+	cfg := Config{Enabled: true, Arms: []string{ArmDetour}, Projects: []Project{{Name: "p", Repo: repo}}}
+	s, _ := Begin(cfg, state, "old", repo, "lazy", tr)
+	if s.InTrial() || !strings.HasPrefix(s.Excluded, "joined-late") {
+		t.Fatalf("a session already running must stay out: %+v", s)
+	}
+	// A session first seen lazily right after it started is fine.
+	fresh := filepath.Join(t.TempDir(), "f.jsonl")
+	os.WriteFile(fresh, []byte(fmt.Sprintf(`{"type":"user","timestamp":%q,"message":{"content":"hi"}}`+"\n", time.Now().UTC().Format(time.RFC3339))), 0o644)
+	if s, _ := Begin(cfg, state, "new", repo, "lazy", fresh); !s.InTrial() {
+		t.Fatalf("a fresh session joins: %+v", s)
 	}
 }

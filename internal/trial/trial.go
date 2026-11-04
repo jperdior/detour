@@ -100,15 +100,18 @@ func LoadConfig(path string) (Config, error) {
 
 // Session is one session's record.
 type Session struct {
-	ID             string    `json:"session_id"`
-	Project        string    `json:"project,omitempty"` // empty: not in the trial
-	Arm            string    `json:"arm,omitempty"`
-	Origin         string    `json:"origin,omitempty"` // interactive, headless, loop
-	Source         string    `json:"source,omitempty"` // SessionStart source, or "lazy"
-	Cwd            string    `json:"cwd,omitempty"`
-	TranscriptPath string    `json:"transcript_path,omitempty"`
-	Started        time.Time `json:"started"`
-	Ended          time.Time `json:"ended,omitempty"`
+	ID             string `json:"session_id"`
+	Project        string `json:"project,omitempty"` // empty: not in the trial
+	Arm            string `json:"arm,omitempty"`
+	Origin         string `json:"origin,omitempty"` // interactive, headless, loop
+	Source         string `json:"source,omitempty"` // SessionStart source, or "lazy"
+	Cwd            string `json:"cwd,omitempty"`
+	TranscriptPath string `json:"transcript_path,omitempty"`
+	// Excluded says why a session in a trial project is left out, e.g.
+	// "joined-late": it was already running when the trial reached it.
+	Excluded string    `json:"excluded,omitempty"`
+	Started  time.Time `json:"started"`
+	Ended    time.Time `json:"ended,omitempty"`
 	// Usage is measured at SessionEnd; the report measures again from the
 	// transcript, which may have grown if the session was resumed.
 	Usage *transcript.Summary `json:"usage,omitempty"`
@@ -186,7 +189,12 @@ func Begin(cfg Config, dir, id, cwd, source, transcriptPath string) (*Session, e
 		return s, nil
 	}
 	s := &Session{ID: id, Cwd: cwd, Source: source, TranscriptPath: transcriptPath, Started: time.Now().UTC()}
-	if name, ok := MatchProject(cfg, cwd); ok {
+	if name, ok := MatchProject(cfg, cwd); ok && source == "lazy" && joinedLate(transcriptPath) {
+		// The session ran without the trial until now (it started before
+		// the hooks were installed): half of it would be in neither arm.
+		s.Excluded = "joined-late: " + name
+		s.Cwd, s.TranscriptPath = "", ""
+	} else if ok {
 		s.Project = name
 		s.Arm = pick(cfg.Arms)
 		s.Origin = origin()
@@ -213,6 +221,16 @@ func MatchProject(cfg Config, cwd string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// joinedLate is true when the transcript shows the session had been running
+// for more than two minutes before the trial first saw it.
+func joinedLate(transcriptPath string) bool {
+	if transcriptPath == "" {
+		return false
+	}
+	u, err := transcript.Summarize(transcriptPath)
+	return err == nil && !u.First.IsZero() && time.Since(u.First) > 2*time.Minute
 }
 
 func origin() string {

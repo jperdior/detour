@@ -194,6 +194,34 @@ func (c Config) BudgetReason(f File, used int) string {
 		used, f.Path, f.Lines, c.FileBudget, shellQuote(f.Path), shellQuote(f.Path))
 }
 
+// proseExt are documents an agent must read as written (specs, plans,
+// instructions); the hook never governs them.
+var proseExt = map[string]bool{".md": true, ".markdown": true, ".mdx": true, ".txt": true, ".rst": true, ".adoc": true}
+
+// Governed reports whether the policy applies to path: a file inside root
+// (the session's repository) that is not prose. Files outside it, such as
+// Claude Code's saved tool results or a scratchpad, are never blocked. An
+// empty root governs every path.
+func Governed(path, cwd, root string) bool {
+	if proseExt[strings.ToLower(filepath.Ext(path))] {
+		return false
+	}
+	if root == "" {
+		return true
+	}
+	abs := resolve(path, cwd)
+	rel, err := filepath.Rel(realDir(root), realDir(filepath.Dir(abs)))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// realDir resolves symlinks (macOS /tmp is /private/tmp) when it can.
+func realDir(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Clean(p)
+}
+
 func resolve(path, cwd string) string {
 	if filepath.IsAbs(path) || cwd == "" {
 		return path

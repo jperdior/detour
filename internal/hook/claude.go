@@ -4,7 +4,9 @@ package hook
 import (
 	"encoding/json"
 	"io"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/jperdior/detour/internal/ledger"
 	"github.com/jperdior/detour/internal/policy"
@@ -62,6 +64,10 @@ func Claude(in io.Reader, out io.Writer, cfg policy.Config, ledgerPath string) e
 	if d.Kind == policy.Allow {
 		return nil
 	}
+	d = governed(d, hi.Cwd)
+	if d.Kind == policy.Allow {
+		return nil
+	}
 	budgetDir := filepath.Join(filepath.Dir(ledgerPath), "sessions")
 	useBudget := !cfg.BlockOnly && !cfg.Shadow && cfg.FileBudget > 0 && hi.SessionID != "" && len(d.Files) > 0
 	if d.Kind == policy.Partial && useBudget {
@@ -113,6 +119,38 @@ func chargeBudget(cfg policy.Config, d policy.Decision, session, dir, cwd string
 	}
 	_ = b.save()
 	return d
+}
+
+// governed drops the files the policy must leave alone (prose, files outside
+// the session's repository) and allows the call if none remain.
+func governed(d policy.Decision, cwd string) policy.Decision {
+	root := repoRoot(cwd)
+	var keep []policy.File
+	for _, f := range d.Files {
+		if policy.Governed(f.Path, cwd, root) {
+			keep = append(keep, f)
+		}
+	}
+	if len(keep) == 0 {
+		return policy.Decision{Kind: policy.Allow}
+	}
+	if len(keep) != len(d.Files) {
+		d.Files = keep
+	}
+	return d
+}
+
+// repoRoot is the git toplevel of cwd, or cwd itself outside git. It runs
+// only for reads of large files, so the hook stays fast on everything else.
+func repoRoot(cwd string) string {
+	if cwd == "" {
+		return ""
+	}
+	out, err := exec.Command("git", "-C", cwd, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return cwd
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func budgetKey(path, cwd string) string {

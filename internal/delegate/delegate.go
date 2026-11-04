@@ -132,7 +132,7 @@ func BuildPrompt(question string, files []File) string {
 func Ask(ctx context.Context, r *config.Resolved, question string, files []File) (*Result, error) {
 	prompt := BuildPrompt(question, files)
 	if max := r.Mode.MaxInputTokens; max > 0 && len(prompt)/4 > max {
-		return nil, fmt.Errorf("input is ~%d tokens, over this mode's limit of %d; split the files across several questions", len(prompt)/4, max)
+		return nil, fmt.Errorf("input is ~%d tokens, over this mode's limit of %d. Send only the line ranges that matter (find them with Grep), e.g. FILE:1200-2400, or split the files across several questions", len(prompt)/4, max)
 	}
 	timeout := time.Duration(r.Mode.TimeoutSeconds) * time.Second
 	if timeout <= 0 {
