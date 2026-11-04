@@ -178,6 +178,9 @@ func cmdBench(args []string) error {
 	if *out == "" {
 		*out = filepath.Join(root, "bench", "results", time.Now().Format("20060102-150405"))
 	}
+	if *out, err = filepath.Abs(*out); err != nil {
+		return err
+	}
 	ss, err := bench.LoadScenarios(*scenarios)
 	if err != nil {
 		return err

@@ -45,6 +45,18 @@ func TestCheckRead(t *testing.T) {
 	}
 }
 
+func TestPartialReportsRequestedLines(t *testing.T) {
+	dir := t.TempDir()
+	writeLines(t, dir, "big.go", 500)
+	c := Config{MinLines: 350}
+	if d := c.CheckRead("big.go", 10, 120, dir); d.Lines != 120 {
+		t.Fatalf("Read lines = %d", d.Lines)
+	}
+	if d := c.CheckBash("head -n 40 big.go", dir); d.Lines != 40 {
+		t.Fatalf("head lines = %d", d.Lines)
+	}
+}
+
 func TestCheckReadReasonTellsModelWhatToRun(t *testing.T) {
 	dir := t.TempDir()
 	writeLines(t, dir, "big.go", 400)
@@ -105,8 +117,12 @@ func TestCountLinesWithoutTrailingNewline(t *testing.T) {
 
 func TestFromEnv(t *testing.T) {
 	t.Setenv("DETOUR_MIN_LINES", "120")
-	if FromEnv().MinLines != 120 {
-		t.Fatal("env override ignored")
+	if c := FromEnv(); c.MinLines != 120 || c.FileBudget != 120 {
+		t.Fatalf("env override ignored: %+v", c)
+	}
+	t.Setenv("DETOUR_FILE_BUDGET", "0")
+	if FromEnv().FileBudget != 0 {
+		t.Fatal("budget 0 should disable it")
 	}
 	t.Setenv("DETOUR_MIN_LINES", "garbage")
 	if FromEnv().MinLines != DefaultMinLines {

@@ -2,6 +2,7 @@ package bench
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -28,6 +29,27 @@ func TestParseClaude(t *testing.T) {
 	}
 }
 
+// Trimmed stream-json: init, one assistant turn with two tool calls, result.
+const claudeStream = `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Grep","input":{"pattern":"PreRun","path":"/r"}},{"type":"tool_use","name":"Read","input":{"file_path":"/r/command.go","offset":900,"limit":100}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","content":"..."}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"detour read -q \"x\" command.go"}}]}}
+{"type":"result","subtype":"success","is_error":false,"result":"done","total_cost_usd":0.5,"num_turns":3,"usage":{"input_tokens":1,"cache_creation_input_tokens":2,"cache_read_input_tokens":3,"output_tokens":4}}`
+
+func TestParseClaudeStream(t *testing.T) {
+	var r Result
+	if err := ParseClaude([]byte(claudeStream), &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.ClaudeCostUSD != 0.5 || r.Answer != "done" || r.Tools["Grep"] != 1 || r.Tools["Read"] != 1 || r.Tools["Bash"] != 1 {
+		t.Fatalf("got %+v", r)
+	}
+	want := []string{`Grep "PreRun" r`, "Read command.go [900+100]", `Bash: detour read -q "x" command.go`}
+	if !slices.Equal(r.ToolCalls, want) {
+		t.Fatalf("tool calls %q", r.ToolCalls)
+	}
+}
+
 func TestScore(t *testing.T) {
 	s := Scenario{Expect: []string{"persistentprerun", `\bPreRun\b`, "PostRun"}}
 	ok, missing := Score(s, "PersistentPreRun then PreRun")
@@ -41,6 +63,9 @@ func TestClaudeArgsOnlyDetourLoadsPlugin(t *testing.T) {
 	det := ClaudeArgs("q", "sonnet", Detour, "/p")
 	if slices.Contains(base, "--plugin-dir") || !slices.Contains(det, "--plugin-dir") {
 		t.Fatalf("base %v\ndet %v", base, det)
+	}
+	if !slices.Contains(base, "stream-json") {
+		t.Fatal("bench needs stream-json to see tool calls")
 	}
 	if len(det) != len(base)+2 {
 		t.Fatal("variants should differ only by the plugin")
@@ -99,4 +124,36 @@ func TestReadResultsRoundTrip(t *testing.T) {
 		t.Fatalf("got %v %v", rs, err)
 	}
 	_ = os.Remove(p)
+}
+
+// Regression: a relative OutDir made the hook write its ledger inside the
+// fixture checkout (the session's cwd), so blocks were never counted.
+func TestRunUsesAbsoluteLedgerPath(t *testing.T) {
+	tmp := t.TempDir()
+	repo := filepath.Join(tmp, "cache", "fake@v1")
+	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Fake claude: records DETOUR_LEDGER and prints a minimal result.
+	bin := filepath.Join(tmp, "claude")
+	script := "#!/bin/sh\necho \"$DETOUR_LEDGER\" > \"" + tmp + "/ledger-env\"\necho '{\"type\":\"result\",\"result\":\"ok\"}'\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wd, _ := os.Getwd()
+	t.Cleanup(func() { os.Chdir(wd) })
+	os.Chdir(tmp)
+
+	_, err := Run(context.Background(), Options{
+		Scenarios: []Scenario{{Name: "s", Repo: "fake", Ref: "v1", Prompt: "p"}},
+		Variants:  []string{Baseline}, Reps: 1,
+		OutDir: "out", CacheDir: "cache", PluginDir: "plugin", BinDir: ".", ClaudeBin: bin,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(filepath.Join(tmp, "ledger-env"))
+	if !filepath.IsAbs(strings.TrimSpace(string(got))) {
+		t.Fatalf("DETOUR_LEDGER is not absolute: %q", got)
+	}
 }

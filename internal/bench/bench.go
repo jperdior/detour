@@ -100,6 +100,10 @@ type Result struct {
 	DurationMS          int64   `json:"duration_ms"`
 	PermissionDenials   int     `json:"permission_denials"`
 
+	// What the agent did: count per tool, and a one-line summary per call.
+	Tools     map[string]int `json:"tools,omitempty"`
+	ToolCalls []string       `json:"tool_calls,omitempty"`
+
 	// Quality.
 	Passed  bool     `json:"passed"`
 	Missing []string `json:"missing,omitempty"`
@@ -143,11 +147,50 @@ type claudeResult struct {
 	PermissionDenials []json.RawMessage `json:"permission_denials"`
 }
 
-// ParseClaude fills r from Claude Code's JSON output.
+// ParseClaude fills r from Claude Code's output: either stream-json (one
+// event per line, which also gives the tool calls) or a single JSON result.
 func ParseClaude(raw []byte, r *Result) error {
-	var c claudeResult
-	if err := json.Unmarshal(lastJSONObject(raw), &c); err != nil {
-		return fmt.Errorf("parse claude output: %w", err)
+	var c *claudeResult
+	r.Tools = map[string]int{}
+	for _, line := range bytes.Split(raw, []byte("\n")) {
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 || line[0] != '{' {
+			continue
+		}
+		var ev struct {
+			Type    string `json:"type"`
+			Message struct {
+				Content []struct {
+					Type  string          `json:"type"`
+					Name  string          `json:"name"`
+					Input json.RawMessage `json:"input"`
+				} `json:"content"`
+			} `json:"message"`
+		}
+		if json.Unmarshal(line, &ev) != nil {
+			continue
+		}
+		switch ev.Type {
+		case "result":
+			var cr claudeResult
+			if json.Unmarshal(line, &cr) == nil {
+				c = &cr
+			}
+		case "assistant":
+			for _, part := range ev.Message.Content {
+				if part.Type == "tool_use" {
+					r.Tools[part.Name]++
+					r.ToolCalls = append(r.ToolCalls, describeTool(part.Name, part.Input))
+				}
+			}
+		}
+	}
+	if c == nil { // plain --output-format json
+		var cr claudeResult
+		if err := json.Unmarshal(lastJSONObject(raw), &cr); err != nil {
+			return fmt.Errorf("parse claude output: %w", err)
+		}
+		c = &cr
 	}
 	r.ClaudeCostUSD = c.TotalCostUSD
 	r.InputTokens = c.Usage.InputTokens
@@ -162,6 +205,30 @@ func ParseClaude(raw []byte, r *Result) error {
 		r.Error = "claude: " + c.Subtype
 	}
 	return nil
+}
+
+// describeTool gives a one-line summary of a tool call for the results file.
+func describeTool(name string, input json.RawMessage) string {
+	var in struct {
+		FilePath string `json:"file_path"`
+		Offset   int    `json:"offset"`
+		Limit    int    `json:"limit"`
+		Pattern  string `json:"pattern"`
+		Path     string `json:"path"`
+		Command  string `json:"command"`
+	}
+	_ = json.Unmarshal(input, &in)
+	switch {
+	case in.FilePath != "" && (in.Offset > 0 || in.Limit > 0):
+		return fmt.Sprintf("%s %s [%d+%d]", name, filepath.Base(in.FilePath), in.Offset, in.Limit)
+	case in.FilePath != "":
+		return name + " " + filepath.Base(in.FilePath)
+	case in.Command != "":
+		return name + ": " + truncate(in.Command, 120)
+	case in.Pattern != "":
+		return fmt.Sprintf("%s %q %s", name, truncate(in.Pattern, 60), filepath.Base(in.Path))
+	}
+	return name
 }
 
 // lastJSONObject tolerates stray lines before the final JSON result.
@@ -197,7 +264,7 @@ var allowedTools = []string{
 func ClaudeArgs(prompt, model, variant, pluginDir string) []string {
 	args := []string{
 		"-p", prompt,
-		"--output-format", "json",
+		"--output-format", "stream-json", "--verbose",
 		"--no-session-persistence",
 		// Skip the user's own settings, plugins and hooks so both variants
 		// run in the same clean environment; only project/local apply.
@@ -218,6 +285,15 @@ func ClaudeArgs(prompt, model, variant, pluginDir string) []string {
 // Reps are interleaved (rep 1 of every scenario and variant, then rep 2...)
 // so drift over time affects both variants alike.
 func Run(ctx context.Context, o Options) ([]Result, error) {
+	// Sessions run inside the fixture checkout, so every path handed to them
+	// (the ledger above all) must be absolute.
+	for _, p := range []*string{&o.OutDir, &o.PluginDir, &o.BinDir, &o.CacheDir} {
+		abs, err := filepath.Abs(*p)
+		if err != nil {
+			return nil, err
+		}
+		*p = abs
+	}
 	if err := os.MkdirAll(filepath.Join(o.OutDir, "raw"), 0o755); err != nil {
 		return nil, err
 	}
@@ -263,7 +339,7 @@ func runOne(ctx context.Context, o Options, s Scenario, variant string, rep int,
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	runErr := cmd.Run()
-	_ = os.WriteFile(filepath.Join(o.OutDir, "raw", r.RunID+".json"), stdout.Bytes(), 0o644)
+	_ = os.WriteFile(filepath.Join(o.OutDir, "raw", r.RunID+".jsonl"), stdout.Bytes(), 0o644)
 
 	if err := ParseClaude(stdout.Bytes(), &r); err != nil {
 		r.Error = fmt.Sprintf("%v; exit: %v; stderr: %s", err, runErr, truncate(stderr.String(), 400))

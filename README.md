@@ -12,7 +12,7 @@ The idea comes from Spotify's [Portal + shunt](https://engineering.atspotify.com
 
 | Layer | What it does |
 |---|---|
-| **Hook** (`detour hook claude`) | Claude Code `PreToolUse` on `Read` and `Bash`. Denies whole reads of files over `DETOUR_MIN_LINES` (default 350), including `cat`/`less`/`head`/`tail` with large counts. Targeted reads (`offset` + `limit` ≤ threshold) pass. Fails open on any error. |
+| **Hook** (`detour hook claude`) | Claude Code `PreToolUse` on `Read` and `Bash`. Denies whole reads of files over `DETOUR_MIN_LINES` (default 350), including `cat`/`less`/`head`/`tail` with large counts. Targeted reads (`offset` + `limit` ≤ threshold) pass until they add up to `DETOUR_FILE_BUDGET` lines of that file in the session (default 350); after that they are denied too. Fails open on any error. |
 | **Delegate** (`detour read`) | Wraps files in `<file>` tags with numbered lines, sends them with the question to the mode's model, prints the answer. Refuses files that look like secrets (`.env`, `*.pem`, keys...). |
 | **Skill** (`detour-read`) | Tells the agent when to delegate and when not to (editing, subtle debugging, small files). |
 | **Ledger** | One JSON line per blocked read, targeted read and delegation, with tokens, cost and latency. `detour stats` summarises it. |
@@ -72,6 +72,8 @@ On a subscription, `total_cost_usd` is the list-price equivalent: you don't pay 
 | `completion-directives` | Answer in `completions.go` (1020 lines) |
 | `unknown-command` | Cross-file: `args.go` (small) + `command.go` (large) |
 | `small-file-control` | Control: only `args.go` (131 lines); detour should change nothing |
+| `execute-flow` | Understanding a ~200-line flow in `command.go`; no single grep answers it |
+| `completions-design` | Design overview of `completions.go` before changing it |
 
 Add your own: `name`, `repo`, `ref`, `prompt`, and `expect` (case-insensitive regexes the answer must match). Scenarios that make the agent read large files whole are where delegation can pay off. If the agent can answer with `grep`, it usually will, and detour won't help.
 
@@ -88,10 +90,13 @@ Add your own: `name`, `repo`, `ref`, `prompt`, and `expect` (case-insensitive re
 | `DEEPSEEK_API_KEY` | | Key for the default model |
 | `DETOUR_MODEL` | mode's model | `haiku`, `deepseek-v4-pro`, `qwen2.5-coder` (local)... |
 | `DETOUR_MIN_LINES` | `350` | Hook threshold |
+| `DETOUR_FILE_BUDGET` | `DETOUR_MIN_LINES` | Lines of one large file readable in chunks per session; `0` disables |
 | `DETOUR_CONFIG` | `~/.config/detour/config.yaml` | |
 | `DETOUR_LEDGER` | `~/.local/state/detour/ledger.jsonl` | |
 
 ## Known limits
+
+- **Why the file budget exists.** In pilots with Opus, a blocked agent did not delegate: it paged through the file in permitted chunks (`[900+300]`, `[750+150]`...), about 1,250 lines of `command.go`. Spotify's rule (targeted reads always pass) then only turns "read whole" into "read in pieces". The budget is what makes the agent actually ask. It is the knob to benchmark: compare `DETOUR_FILE_BUDGET=0` against the default.
 
 - Compound shell commands (`cat big.go | grep x`, redirects) pass through, as in shunt. A smarter shell parser is on the roadmap.
 - The ledger's token figures for blocked reads are estimates (bytes/4). The benchmark uses real billed tokens.

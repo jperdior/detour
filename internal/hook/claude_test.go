@@ -3,6 +3,7 @@ package hook
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,6 +54,41 @@ func TestClaudePartialReadIsAllowedAndLogged(t *testing.T) {
 	ev, _ := ledger.Read(lp)
 	if len(ev) != 1 || ev[0].Kind != ledger.KindPartial {
 		t.Fatalf("ledger: %+v", ev)
+	}
+}
+
+func TestClaudeFileBudget(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "big.go"), []byte(strings.Repeat("x\n", 2000)), 0o644)
+	lp := filepath.Join(dir, "state", "ledger.jsonl")
+	cfg := policy.Config{MinLines: 350, FileBudget: 350}
+	read := func(session string, offset, limit int) string {
+		var out bytes.Buffer
+		payload := fmt.Sprintf(`{"session_id":%q,"cwd":%q,"tool_name":"Read","tool_input":{"file_path":"big.go","offset":%d,"limit":%d}}`, session, dir, offset, limit)
+		if err := Claude(strings.NewReader(payload), &out, cfg, lp); err != nil {
+			t.Fatal(err)
+		}
+		return out.String()
+	}
+	if out := read("s1", 0, 300); out != "" {
+		t.Fatalf("first chunk should pass: %q", out)
+	}
+	if out := read("s1", 300, 40); out != "" {
+		t.Fatalf("340 lines is within budget: %q", out)
+	}
+	if out := read("s1", 340, 100); !strings.Contains(out, "already read 340 lines") {
+		t.Fatalf("over budget should be denied: %q", out)
+	}
+	if out := read("s2", 0, 300); out != "" {
+		t.Fatalf("budget is per session: %q", out)
+	}
+	ev, _ := ledger.Read(lp)
+	kinds := ""
+	for _, e := range ev {
+		kinds += e.Kind + " "
+	}
+	if kinds != "partial partial block partial " {
+		t.Fatalf("ledger kinds: %q", kinds)
 	}
 }
 

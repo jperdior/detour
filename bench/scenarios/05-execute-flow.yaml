@@ -1,0 +1,21 @@
+name: execute-flow
+repo: https://github.com/spf13/cobra
+ref: v1.10.2
+notes: Understanding a flow across ~200 lines of command.go (2072 lines). Not a single grep hit; whole-file reading is natural here.
+prompt: |
+  Explain step by step what happens when a program calls Execute() on a cobra
+  root command, through ExecuteC and execute, until the target command's Run
+  function is called. Name every function and check involved in order
+  (help/completion setup, finding the command, flag parsing, help and version
+  handling, argument and flag validation), and explain how errors are printed
+  and when they are silenced.
+expect:
+  - 'InitDefaultHelpCmd'
+  - '\bTraverse\b'
+  - '\bFind\b'
+  - 'ParseFlags'
+  - 'ErrHelp'
+  - 'Runnable'
+  - 'ValidateArgs'
+  - 'ValidateRequiredFlags'
+  - 'SilenceErrors'

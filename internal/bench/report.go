@@ -19,6 +19,8 @@ type Stats struct {
 	DelegateTokens                                               []float64
 
 	Turns, DurationS, Blocks []float64
+
+	Tools map[string]int // total calls per tool over successful sessions
 }
 
 func mean(xs []float64) float64 {
@@ -76,6 +78,12 @@ func Aggregate(rs []Result) map[string]map[string]*Stats {
 		st.Turns = append(st.Turns, float64(r.Turns))
 		st.DurationS = append(st.DurationS, float64(r.DurationMS)/1000)
 		st.Blocks = append(st.Blocks, float64(r.Blocks))
+		if st.Tools == nil {
+			st.Tools = map[string]int{}
+		}
+		for k, v := range r.Tools {
+			st.Tools[k] += v
+		}
 	}
 	return out
 }
@@ -115,6 +123,13 @@ func WriteMarkdown(w io.Writer, rs []Result) {
 				mean(st.InputTokens), mean(st.CacheWriteTokens), mean(st.CacheReadTokens), mean(st.OutputTokens),
 				mean(st.DelegateTokens), mean(st.Turns), mean(st.DurationS), mean(st.Blocks))
 		}
+		fmt.Fprintf(w, "\nTool calls per session:")
+		for _, v := range []string{Baseline, Detour} {
+			if st := agg[n][v]; st != nil && len(st.Turns) > 0 {
+				fmt.Fprintf(w, " %s: %s.", v, toolSummary(st.Tools, len(st.Turns)))
+			}
+		}
+		fmt.Fprintln(w)
 		b, d := agg[n][Baseline], agg[n][Detour]
 		if b != nil && d != nil && len(b.NetCost) > 0 && len(d.NetCost) > 0 {
 			bc, dc, bn, dn := mean(b.ClaudeCost), mean(d.ClaudeCost), mean(b.NetCost), mean(d.NetCost)
@@ -135,4 +150,28 @@ func WriteMarkdown(w io.Writer, rs []Result) {
 		fmt.Fprintf(w, "| net $ | %.4f | %.4f | **%+.1f%%** |\n", baseNet, detNet, pct(baseNet, detNet))
 		fmt.Fprintf(w, "\nWith few repetitions, treat changes smaller than the sd as noise.\n")
 	}
+}
+
+func toolSummary(tools map[string]int, sessions int) string {
+	if len(tools) == 0 {
+		return "none"
+	}
+	var names []string
+	for k := range tools {
+		names = append(names, k)
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if tools[names[i]] != tools[names[j]] {
+			return tools[names[i]] > tools[names[j]]
+		}
+		return names[i] < names[j]
+	})
+	out := ""
+	for i, k := range names {
+		if i > 0 {
+			out += ", "
+		}
+		out += fmt.Sprintf("%s %.1f", k, float64(tools[k])/float64(sessions))
+	}
+	return out
 }

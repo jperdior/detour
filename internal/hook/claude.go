@@ -4,6 +4,7 @@ package hook
 import (
 	"encoding/json"
 	"io"
+	"path/filepath"
 
 	"github.com/jperdior/detour/internal/ledger"
 	"github.com/jperdior/detour/internal/policy"
@@ -61,6 +62,9 @@ func Claude(in io.Reader, out io.Writer, cfg policy.Config, ledgerPath string) e
 	if d.Kind == policy.Allow {
 		return nil
 	}
+	if d.Kind == policy.Partial && cfg.FileBudget > 0 && hi.SessionID != "" && len(d.Files) > 0 {
+		d = chargeBudget(cfg, d, hi.SessionID, filepath.Join(filepath.Dir(ledgerPath), "sessions"), hi.Cwd)
+	}
 	ev := ledger.Event{SessionID: hi.SessionID, Agent: "claude-code", Tool: hi.ToolName, Kind: ledger.KindPartial}
 	for _, f := range d.Files {
 		ev.Paths = append(ev.Paths, f.Path)
@@ -81,4 +85,28 @@ func Claude(in io.Reader, out io.Writer, cfg policy.Config, ledgerPath string) e
 	o.HookSpecificOutput.PermissionDecision = "deny"
 	o.HookSpecificOutput.PermissionDecisionReason = d.Reason
 	return json.NewEncoder(out).Encode(o)
+}
+
+// chargeBudget adds a targeted read to the session's per-file budget and turns
+// it into a block once the budget is exceeded. Blocked chunks are not charged.
+func chargeBudget(cfg policy.Config, d policy.Decision, session, dir, cwd string) policy.Decision {
+	b := loadBudget(dir, session)
+	for _, f := range d.Files {
+		key := f.Path
+		if !filepath.IsAbs(key) && cwd != "" {
+			key = filepath.Join(cwd, key)
+		}
+		if used := b.Used[key]; used+d.Lines > cfg.FileBudget {
+			return policy.Decision{Kind: policy.Block, Files: d.Files, Reason: cfg.BudgetReason(f, used)}
+		}
+	}
+	for _, f := range d.Files {
+		key := f.Path
+		if !filepath.IsAbs(key) && cwd != "" {
+			key = filepath.Join(cwd, key)
+		}
+		b.Used[key] += d.Lines
+	}
+	_ = b.save()
+	return d
 }

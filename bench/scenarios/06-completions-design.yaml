@@ -1,0 +1,17 @@
+name: completions-design
+repo: https://github.com/spf13/cobra
+ref: v1.10.2
+notes: Design overview of completions.go (1020 lines). Typical "understand this module before changing it" task.
+prompt: |
+  I'm about to modify cobra's shell completion engine. Give me a concise
+  design overview of completions.go: the main types, the exported API a
+  program uses to register completions, and how a completion request flows
+  from the hidden completion command to the user's completion functions.
+expect:
+  - 'ShellCompDirective'
+  - 'CompletionOptions'
+  - 'RegisterFlagCompletionFunc'
+  - 'ValidArgsFunction'
+  - 'getCompletions'
+  - 'initCompleteCmd'
+  - '__complete|ShellCompRequestCmd'

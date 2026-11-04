@@ -21,13 +21,22 @@ const DefaultMinLines = 350
 type Config struct {
 	// MinLines: files with more lines than this must be delegated.
 	MinLines int
+	// FileBudget: lines of one large file the agent may read in targeted
+	// chunks per session before further chunks are blocked too. Without it a
+	// blocked agent simply pages through the file. 0 disables the budget.
+	FileBudget int
 }
 
-// FromEnv returns the default config, overridden by DETOUR_MIN_LINES.
+// FromEnv returns the default config, overridden by DETOUR_MIN_LINES and
+// DETOUR_FILE_BUDGET. The budget defaults to MinLines.
 func FromEnv() Config {
 	c := Config{MinLines: DefaultMinLines}
 	if v, err := strconv.Atoi(os.Getenv("DETOUR_MIN_LINES")); err == nil && v > 0 {
 		c.MinLines = v
+	}
+	c.FileBudget = c.MinLines
+	if v, err := strconv.Atoi(os.Getenv("DETOUR_FILE_BUDGET")); err == nil && v >= 0 {
+		c.FileBudget = v
 	}
 	return c
 }
@@ -57,6 +66,9 @@ type Decision struct {
 	Kind   Kind
 	Files  []File // large files involved (Partial or Block)
 	Reason string // message for the model when blocked
+	// Lines requested by a Partial read (limit, or head/tail count); the
+	// caller charges them to the session's file budget.
+	Lines int
 }
 
 // CheckRead handles a file-read tool (Claude Code's Read). offset and limit
@@ -68,7 +80,7 @@ func (c Config) CheckRead(path string, offset, limit int, cwd string) Decision {
 	}
 	f.Path = path
 	if limit > 0 && limit <= c.MinLines {
-		return Decision{Kind: Partial, Files: []File{f}}
+		return Decision{Kind: Partial, Files: []File{f}, Lines: limit}
 	}
 	return Decision{Kind: Block, Files: []File{f}, Reason: c.reason([]File{f})}
 }
@@ -128,7 +140,7 @@ func (c Config) CheckBash(command, cwd string) Decision {
 		return Decision{Kind: Allow}
 	}
 	if count >= 0 && count <= c.MinLines {
-		return Decision{Kind: Partial, Files: large}
+		return Decision{Kind: Partial, Files: large, Lines: count}
 	}
 	return Decision{Kind: Block, Files: large, Reason: c.reason(large)}
 }
@@ -144,6 +156,16 @@ func (c Config) reason(files []File) string {
 	fmt.Fprintf(&b, "  detour read -q \"<your specific question>\" %s\n", strings.Join(paths, " "))
 	fmt.Fprintf(&b, "The answer cites line numbers. To see or edit exact lines, use Read with offset and limit (limit <= %d).", c.MinLines)
 	return b.String()
+}
+
+// BudgetReason is the message when targeted reads of a file exceed the
+// session budget.
+func (c Config) BudgetReason(f File, used int) string {
+	return fmt.Sprintf("detour: you have already read %d lines of %s (%d lines) in this session; the budget per large file is %d.\n"+
+		"Reading it chunk by chunk costs as much as reading it whole. Ask about the rest instead:\n"+
+		"  detour read -q \"<your specific question>\" %s\n"+
+		"If you are about to edit, you have already read enough to call Edit on the lines you saw.",
+		used, f.Path, f.Lines, c.FileBudget, shellQuote(f.Path))
 }
 
 func resolve(path, cwd string) string {
