@@ -1,0 +1,8 @@
+{
+  "name": "detour",
+  "version": "0.1.0",
+  "description": "Delegate bulk file reading to a cheap model. Requires the `detour` binary on PATH.",
+  "author": { "name": "jperdior" },
+  "repository": "https://github.com/jperdior/detour",
+  "license": "MIT"
+}

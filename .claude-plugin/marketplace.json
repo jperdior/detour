@@ -1,0 +1,14 @@
+{
+  "name": "detour",
+  "description": "detour: delegate bulk file reading from Claude Code to cheap models.",
+  "owner": {
+    "name": "jperdior"
+  },
+  "plugins": [
+    {
+      "name": "detour",
+      "source": "./plugin",
+      "description": "Blocks whole reads of large files and delegates the question to a cheap model (DeepSeek, OpenRouter, Ollama) via `detour read`."
+    }
+  ]
+}

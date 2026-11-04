@@ -1,0 +1,14 @@
+name: unknown-command
+repo: https://github.com/spf13/cobra
+ref: v1.10.2
+notes: Cross-file. The error is in args.go (131 lines), the fields in command.go (2072 lines).
+prompt: |
+  When a user types an unknown subcommand on a root command that has
+  subcommands, which function returns the error and what is the format string
+  of the message? Which two Command fields control whether and how
+  "did you mean" suggestions are shown? Answer briefly.
+expect:
+  - 'legacyArgs'
+  - 'unknown command %q for %q'
+  - 'DisableSuggestions'
+  - 'SuggestionsMinimumDistance'

@@ -1,0 +1,48 @@
+# detour default config. Copy it to ~/.config/detour/config.yaml (or point
+# DETOUR_CONFIG at a file) to change it: `detour config > ~/.config/detour/config.yaml`.
+
+providers:
+  deepseek:
+    base_url: https://api.deepseek.com
+    api_key_env: DEEPSEEK_API_KEY
+  openrouter:
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+  ollama:
+    base_url: http://localhost:11434/v1
+    api_key_env: ""            # local, no key; your code never leaves the machine
+
+# Prices are USD per million tokens. They feed the net-cost numbers, so keep
+# them current. DeepSeek, checked 2026-11-04 at
+# https://api-docs.deepseek.com/quick_start/pricing — these are the PEAK prices
+# (01-04 and 06-10 UTC, Mon-Fri); off-peak is half. Peak is the conservative choice.
+models:
+  deepseek-flash:
+    provider: deepseek
+    price: { input: 0.30, cached_input: 0.006, output: 1.20 }
+  deepseek-v4-pro:
+    provider: deepseek
+    price: { input: 1.32, cached_input: 0.044, output: 3.96 }
+  qwen2.5-coder:
+    provider: ollama
+    id: qwen2.5-coder:14b
+    price: { input: 0, cached_input: 0, output: 0 }
+
+modes:
+  bulk-reader:
+    description: Answers questions about one or more large files, compactly, with line numbers.
+    model: deepseek-flash
+    temperature: 0.2
+    max_output_tokens: 2000
+    max_input_tokens: 200000
+    timeout_seconds: 120
+    instructions: |
+      You answer questions about source files for another AI coding agent that
+      cannot afford to read them. Your answer goes straight into its context, so:
+      - Answer only what was asked. No preamble, no closing summary.
+      - Use short bullets. Start each bullet with the exact identifier, type,
+        or line reference (e.g. `command.go:L128 PersistentPreRun`).
+      - Every file line is prefixed with its number as "L<n>|". Cite those
+        numbers so the agent can open exact ranges later.
+      - Quote code only when the exact text matters, and keep quotes short.
+      - If the files do not contain the answer, say so in one line. Never guess.

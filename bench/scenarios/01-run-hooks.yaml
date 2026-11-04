@@ -1,0 +1,15 @@
+name: run-hooks
+repo: https://github.com/spf13/cobra
+ref: v1.10.2
+notes: Answer lives in command.go (2072 lines). Delegation should help.
+prompt: |
+  In this repository, list the hook functions a cobra Command runs around Run,
+  in execution order (include the variants that return an error), and name the
+  package-level variable that makes the persistent hooks of every parent run
+  instead of only the nearest one. Answer in a short list.
+expect:
+  - '\bPersistentPreRunE?\b'
+  - '\bPreRunE?\b'
+  - '\bPostRunE?\b'
+  - '\bPersistentPostRunE?\b'
+  - 'EnableTraverseRunHooks'

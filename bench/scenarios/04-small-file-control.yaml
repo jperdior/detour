@@ -1,0 +1,16 @@
+name: small-file-control
+repo: https://github.com/spf13/cobra
+ref: v1.10.2
+notes: Control. args.go has 131 lines, under the threshold; detour should not block anything and cost should match baseline.
+prompt: |
+  List the exported positional-argument validators defined in args.go.
+  Names only, one per line.
+expect:
+  - '\bNoArgs\b'
+  - '\bOnlyValidArgs\b'
+  - '\bArbitraryArgs\b'
+  - '\bMinimumNArgs\b'
+  - '\bMaximumNArgs\b'
+  - '\bExactArgs\b'
+  - '\bRangeArgs\b'
+  - '\bMatchAll\b'

@@ -1,0 +1,4 @@
+/bin/
+/bench/results/
+*.test
+.DS_Store
