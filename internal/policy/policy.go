@@ -34,6 +34,11 @@ type Config struct {
 	// Shadow logs what the hook would do and never denies anything. It is
 	// the control arm of a field trial.
 	Shadow bool
+	// Redirect turns a block into an allowed, neutralised call instead of a
+	// denial: a Read is cut to its first line, a Bash command is replaced by
+	// "true", and the reason goes to the agent as context. Whatever drives a
+	// headless session (an agent loop, CI) sees no permission denial.
+	Redirect bool
 }
 
 // FromEnv returns the default config, overridden by DETOUR_MIN_LINES and

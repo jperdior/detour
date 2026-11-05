@@ -12,7 +12,6 @@ import (
 
 	"github.com/jperdior/detour/internal/ledger"
 	"github.com/jperdior/detour/internal/policy"
-	"github.com/jperdior/detour/internal/transcript"
 )
 
 // Tests draw sessions as interactive ones unless they say otherwise.
@@ -270,36 +269,28 @@ func TestDetourStaysOffAfterTheTrial(t *testing.T) {
 	}
 }
 
-func TestOnlyInteractiveSessionsAreDrawn(t *testing.T) {
+func TestHeadlessSessionsAreRedirectedNotDenied(t *testing.T) {
 	repo := gitRepo(t)
+	big := filepath.Join(repo, "big.go")
+	if err := os.WriteFile(big, []byte(strings.Repeat("x := 1\n", 2000)), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cfg := Config{Enabled: true, Arms: []string{ArmDetour}, Projects: []Project{{Name: "p", Repo: repo}}}
-	for _, c := range []struct{ entry, loop, want string }{
-		{"sdk-cli", "", "not-interactive: headless"},
-		{"cli", "/some/loop", "not-interactive: loop"},
-	} {
-		t.Setenv("CLAUDE_CODE_ENTRYPOINT", c.entry)
-		t.Setenv("DELIVERY_LOOP_ORIGIN", c.loop)
-		s, _ := Begin(cfg, t.TempDir(), "h", repo, "startup", "")
-		if s.InTrial() || !strings.HasPrefix(s.Excluded, c.want) {
-			t.Fatalf("%+v: stays out of the draw: %+v", c, s)
-		}
-	}
-	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
-	t.Setenv("DELIVERY_LOOP_ORIGIN", "")
-	if s, _ := Begin(cfg, t.TempDir(), "i", repo, "startup", ""); !s.InTrial() || s.Origin != OriginInteractive {
-		t.Fatalf("interactive sessions are drawn: %+v", s)
-	}
-}
-
-func TestOldNonInteractiveRecordsDoNotCount(t *testing.T) {
 	state := t.TempDir()
-	for id, o := range map[string]string{"a": "loop", "b": OriginInteractive, "c": ""} {
-		s := &Session{ID: id, Project: "p", Arm: ArmOff, Origin: o, Ended: time.Now(), Usage: &transcript.Summary{Models: map[string]*transcript.Usage{"m": {Calls: 1}}}}
-		if err := s.Save(state); err != nil {
+	call := func(id string) string {
+		var out bytes.Buffer
+		in := fmt.Sprintf(`{"session_id":%q,"cwd":%q,"tool_name":"Read","tool_input":{"file_path":%q}}`, id, repo, big)
+		if err := PreToolUse(strings.NewReader(in), &out, cfg, state, filepath.Join(state, "l.jsonl"), policy.Config{MinLines: 350, FileBudget: 350}); err != nil {
 			t.Fatal(err)
 		}
+		return out.String()
 	}
-	if n := Measured(state); n != 2 {
-		t.Fatalf("measured = %d, want 2 (the loop record doesn't count)", n)
+	t.Setenv("DELIVERY_LOOP_ORIGIN", "/some/loop")
+	if out := call("loop"); strings.Contains(out, `"deny"`) || !strings.Contains(out, `"limit":1`) || !strings.Contains(out, "detour read") {
+		t.Fatalf("a loop session is redirected, not denied: %s", out)
+	}
+	t.Setenv("DELIVERY_LOOP_ORIGIN", "")
+	if out := call("chat"); !strings.Contains(out, `"deny"`) {
+		t.Fatalf("an interactive session is denied as before: %s", out)
 	}
 }

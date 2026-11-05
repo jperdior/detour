@@ -23,9 +23,11 @@ type claudeInput struct {
 
 type claudeOutput struct {
 	HookSpecificOutput struct {
-		HookEventName            string `json:"hookEventName"`
-		PermissionDecision       string `json:"permissionDecision"`
-		PermissionDecisionReason string `json:"permissionDecisionReason"`
+		HookEventName            string         `json:"hookEventName"`
+		PermissionDecision       string         `json:"permissionDecision"`
+		PermissionDecisionReason string         `json:"permissionDecisionReason,omitempty"`
+		UpdatedInput             map[string]any `json:"updatedInput,omitempty"`
+		AdditionalContext        string         `json:"additionalContext,omitempty"`
 	} `json:"hookSpecificOutput"`
 }
 
@@ -100,9 +102,36 @@ func Claude(in io.Reader, out io.Writer, cfg policy.Config, ledgerPath string) e
 	}
 	var o claudeOutput
 	o.HookSpecificOutput.HookEventName = "PreToolUse"
+	if cfg.Redirect {
+		if in, note, ok := neutralise(hi.ToolName, hi.ToolInput); ok {
+			o.HookSpecificOutput.PermissionDecision = "allow"
+			o.HookSpecificOutput.UpdatedInput = in
+			o.HookSpecificOutput.AdditionalContext = note + " " + d.Reason
+			return json.NewEncoder(out).Encode(o)
+		}
+	}
 	o.HookSpecificOutput.PermissionDecision = "deny"
 	o.HookSpecificOutput.PermissionDecisionReason = d.Reason
 	return json.NewEncoder(out).Encode(o)
+}
+
+// neutralise rewrites a blocked call into a harmless one: a Read of the
+// first line only, or a Bash command that does nothing.
+func neutralise(tool string, raw json.RawMessage) (map[string]any, string, bool) {
+	var in map[string]any
+	if json.Unmarshal(raw, &in) != nil || in == nil {
+		return nil, "", false
+	}
+	switch tool {
+	case "Read":
+		delete(in, "offset")
+		in["limit"] = 1
+		return in, "detour returned only the first line of this read; it is not the whole file.", true
+	case "Bash":
+		in["command"] = "true"
+		return in, "detour did not run this command; its empty output is not the file.", true
+	}
+	return nil, "", false
 }
 
 // chargeBudget adds a targeted read to the session's per-file budget and turns

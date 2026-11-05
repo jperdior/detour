@@ -7,7 +7,7 @@ detour is meant to make Claude Code cheaper by having a small model (Haiku) read
 - **The draw.** Every new Claude Code session you start in the repositories you pick (their worktrees included) is assigned at random, 50/50:
   - **off**: nothing changes. detour only notes which reads it would have blocked.
   - **detour**: whole reads of large code files (over 350 lines) are blocked, and Claude asks Haiku about them instead.
-- **Only interactive sessions.** Sessions you open and chat with are drawn. Headless runs (`claude -p`, agent loops, scripts, CI) are left alone: detour never blocks anything there, so a tool that drives Claude never sees a denial from it.
+- **Loops and scripts too.** Headless sessions (`claude -p`, agent loops, CI) are drawn as well. There detour never denies a call: it cuts the read to one line and tells Claude to use `detour read`, so the tool driving Claude sees no permission denial.
 - **The measurement.** When the session ends, detour measures its cost at list price from the transcript Claude Code already keeps on your machine.
 - **The end.** After 100 sessions the trial ends and detour switches off. At the start of your next session Claude tells you and asks whether to send the anonymized results; it shows you the report and publishes it only with your permission. Then it offers to remove detour. If you say "not now", it asks again in your next session.
 

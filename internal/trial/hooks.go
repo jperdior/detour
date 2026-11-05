@@ -181,6 +181,9 @@ func PreToolUse(in io.Reader, out io.Writer, cfg Config, dir, ledgerPath string,
 	case ArmBlock:
 		pc.BlockOnly = true
 	}
+	// Outside interactive sessions a driver reads the session's denials, and
+	// many treat any as a failure: redirect instead of denying.
+	pc.Redirect = s.Origin != "" && s.Origin != OriginInteractive
 	return hook.Claude(bytes.NewReader(raw), out, pc, ledgerPath)
 }
 
