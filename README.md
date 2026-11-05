@@ -19,6 +19,8 @@ The benchmarks use fixed tasks. To learn whether detour saves anything in everyd
 ## How it works
 
 > **detour only acts on source code inside the repository.** Markdown and text files (`.md`, `.mdx`, `.txt`, `.rst`, `.adoc`), such as specs, plans, ADRs and docs, are never blocked: the agent reads them whole, as usual, because they are instructions where every word counts. Files outside the repository (Claude Code's saved tool results, scratchpads, `/tmp`) are never blocked either.
+>
+> In the field trial, only interactive sessions are drawn: headless runs (`claude -p`, agent loops, CI) are never blocked.
 
 | Layer | What it does |
 |---|---|

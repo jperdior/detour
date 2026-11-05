@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -43,9 +42,6 @@ type Config struct {
 	// ConfigDirs are the Claude Code config dirs the hooks were installed
 	// in, so uninstall can clean every profile.
 	ConfigDirs []string `yaml:"config_dirs,omitempty"`
-	// ExcludeOrigins keeps sessions of these origins out of the draw, e.g.
-	// "loop" while an agent loop treats hook denials as failures.
-	ExcludeOrigins []string `yaml:"exclude_origins,omitempty"`
 }
 
 // Project is a repository in the trial. Its worktrees count too.
@@ -131,7 +127,11 @@ type Session struct {
 }
 
 // InTrial is true for sessions in a trial project.
-func (s *Session) InTrial() bool { return s != nil && s.Project != "" }
+// InTrial is true for a drawn session. Records from before only interactive
+// sessions were drawn may carry another origin: they don't count.
+func (s *Session) InTrial() bool {
+	return s != nil && s.Project != "" && (s.Origin == "" || s.Origin == OriginInteractive)
+}
 
 func sessionPath(dir, id string) string {
 	return filepath.Join(dir, "sessions", safeName(id)+".json")
@@ -207,8 +207,11 @@ func Begin(cfg Config, dir, id, cwd, source, transcriptPath string) (*Session, e
 		// the hooks; resume: an older conversation): it would be in neither arm.
 		s.Excluded = "joined-late: " + name
 		s.Cwd, s.TranscriptPath = "", ""
-	} else if o := origin(); ok && slices.Contains(cfg.ExcludeOrigins, o) {
-		s.Excluded = "origin-excluded: " + o + ": " + name
+	} else if o := origin(); ok && o != OriginInteractive {
+		// Only interactive sessions are drawn. A headless run (claude -p, an
+		// agent loop, CI) reports hook denials to whatever drives it, and many
+		// drivers treat any denial as a failure.
+		s.Excluded = "not-interactive: " + o + ": " + name
 		s.Cwd, s.TranscriptPath = "", ""
 	} else if ok && Complete(cfg, dir) {
 		// The trial has its sessions: no more draws, detour stays off.
@@ -273,12 +276,15 @@ func profile() string {
 	return name
 }
 
+// OriginInteractive is the only origin drawn into the trial.
+const OriginInteractive = "interactive"
+
 func origin() string {
 	switch {
 	case os.Getenv("DELIVERY_LOOP_ORIGIN") != "":
 		return "loop"
 	case os.Getenv("CLAUDE_CODE_ENTRYPOINT") == "cli":
-		return "interactive"
+		return OriginInteractive
 	}
 	return "headless"
 }

@@ -12,7 +12,15 @@ import (
 
 	"github.com/jperdior/detour/internal/ledger"
 	"github.com/jperdior/detour/internal/policy"
+	"github.com/jperdior/detour/internal/transcript"
 )
+
+// Tests draw sessions as interactive ones unless they say otherwise.
+func TestMain(m *testing.M) {
+	os.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	os.Unsetenv("DELIVERY_LOOP_ORIGIN")
+	os.Exit(m.Run())
+}
 
 func gitRepo(t *testing.T) string {
 	t.Helper()
@@ -262,16 +270,36 @@ func TestDetourStaysOffAfterTheTrial(t *testing.T) {
 	}
 }
 
-func TestExcludedOriginIsNotDrawn(t *testing.T) {
+func TestOnlyInteractiveSessionsAreDrawn(t *testing.T) {
 	repo := gitRepo(t)
-	t.Setenv("DELIVERY_LOOP_ORIGIN", "/some/loop")
-	cfg := Config{Enabled: true, Arms: []string{ArmDetour}, ExcludeOrigins: []string{"loop"}, Projects: []Project{{Name: "p", Repo: repo}}}
-	s, _ := Begin(cfg, t.TempDir(), "l", repo, "startup", "")
-	if s.InTrial() || !strings.HasPrefix(s.Excluded, "origin-excluded: loop") {
-		t.Fatalf("loop sessions stay out: %+v", s)
+	cfg := Config{Enabled: true, Arms: []string{ArmDetour}, Projects: []Project{{Name: "p", Repo: repo}}}
+	for _, c := range []struct{ entry, loop, want string }{
+		{"sdk-cli", "", "not-interactive: headless"},
+		{"cli", "/some/loop", "not-interactive: loop"},
+	} {
+		t.Setenv("CLAUDE_CODE_ENTRYPOINT", c.entry)
+		t.Setenv("DELIVERY_LOOP_ORIGIN", c.loop)
+		s, _ := Begin(cfg, t.TempDir(), "h", repo, "startup", "")
+		if s.InTrial() || !strings.HasPrefix(s.Excluded, c.want) {
+			t.Fatalf("%+v: stays out of the draw: %+v", c, s)
+		}
 	}
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
 	t.Setenv("DELIVERY_LOOP_ORIGIN", "")
-	if s, _ := Begin(cfg, t.TempDir(), "i", repo, "startup", ""); !s.InTrial() {
-		t.Fatalf("other sessions are still drawn: %+v", s)
+	if s, _ := Begin(cfg, t.TempDir(), "i", repo, "startup", ""); !s.InTrial() || s.Origin != OriginInteractive {
+		t.Fatalf("interactive sessions are drawn: %+v", s)
+	}
+}
+
+func TestOldNonInteractiveRecordsDoNotCount(t *testing.T) {
+	state := t.TempDir()
+	for id, o := range map[string]string{"a": "loop", "b": OriginInteractive, "c": ""} {
+		s := &Session{ID: id, Project: "p", Arm: ArmOff, Origin: o, Ended: time.Now(), Usage: &transcript.Summary{Models: map[string]*transcript.Usage{"m": {Calls: 1}}}}
+		if err := s.Save(state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := Measured(state); n != 2 {
+		t.Fatalf("measured = %d, want 2 (the loop record doesn't count)", n)
 	}
 }
