@@ -261,3 +261,17 @@ func TestDetourStaysOffAfterTheTrial(t *testing.T) {
 		t.Fatal("detour is off in sessions started after the trial")
 	}
 }
+
+func TestExcludedOriginIsNotDrawn(t *testing.T) {
+	repo := gitRepo(t)
+	t.Setenv("DELIVERY_LOOP_ORIGIN", "/some/loop")
+	cfg := Config{Enabled: true, Arms: []string{ArmDetour}, ExcludeOrigins: []string{"loop"}, Projects: []Project{{Name: "p", Repo: repo}}}
+	s, _ := Begin(cfg, t.TempDir(), "l", repo, "startup", "")
+	if s.InTrial() || !strings.HasPrefix(s.Excluded, "origin-excluded: loop") {
+		t.Fatalf("loop sessions stay out: %+v", s)
+	}
+	t.Setenv("DELIVERY_LOOP_ORIGIN", "")
+	if s, _ := Begin(cfg, t.TempDir(), "i", repo, "startup", ""); !s.InTrial() {
+		t.Fatalf("other sessions are still drawn: %+v", s)
+	}
+}

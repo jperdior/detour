@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -42,6 +43,9 @@ type Config struct {
 	// ConfigDirs are the Claude Code config dirs the hooks were installed
 	// in, so uninstall can clean every profile.
 	ConfigDirs []string `yaml:"config_dirs,omitempty"`
+	// ExcludeOrigins keeps sessions of these origins out of the draw, e.g.
+	// "loop" while an agent loop treats hook denials as failures.
+	ExcludeOrigins []string `yaml:"exclude_origins,omitempty"`
 }
 
 // Project is a repository in the trial. Its worktrees count too.
@@ -202,6 +206,9 @@ func Begin(cfg Config, dir, id, cwd, source, transcriptPath string) (*Session, e
 		// The session ran without the trial until now (lazy: it started before
 		// the hooks; resume: an older conversation): it would be in neither arm.
 		s.Excluded = "joined-late: " + name
+		s.Cwd, s.TranscriptPath = "", ""
+	} else if o := origin(); ok && slices.Contains(cfg.ExcludeOrigins, o) {
+		s.Excluded = "origin-excluded: " + o + ": " + name
 		s.Cwd, s.TranscriptPath = "", ""
 	} else if ok && Complete(cfg, dir) {
 		// The trial has its sessions: no more draws, detour stays off.
